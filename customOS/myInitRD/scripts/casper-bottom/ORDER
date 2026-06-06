@@ -1,0 +1,68 @@
+/scripts/casper-bottom/05mountpoints "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/12fstab "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/13swap "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/14locales "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/15autologin "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/18hostname "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/19keyboard "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/20xconfig "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/22desktop_settings "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/22sslcert "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/24preseed "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/25adduser "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/25configure_init "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/25disable_cdrom.mount "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/30accessibility "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/31disable_update_notifier "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/33enable_apport_crashes "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/34disable_kde_services "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/37disable_screensaver_lubuntu "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/40install_driver_updates "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/41apt_cdrom "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/43disable_updateinitramfs "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/44pk_allow_ubuntu "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/45jackd2 "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/52gnome_initial_setup "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/53disable_unattended_upgrades "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/55disable_snap_refresh "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/56override_nvidia_udev_rule "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/57pollinate "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/58server_network "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/59disable_mozc_autosetup "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/60_create_intaller_logdir "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/61desktop_canary_tweaks "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/casper-bottom/99casperboot "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf

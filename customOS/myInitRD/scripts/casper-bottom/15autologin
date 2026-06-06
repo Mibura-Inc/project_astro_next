@@ -1,0 +1,72 @@
+#!/bin/sh
+
+PREREQ=""
+DESCRIPTION="Setting up automatic login..."
+
+prereqs()
+{
+       echo "$PREREQ"
+}
+
+case $1 in
+# get pre-requisites
+prereqs)
+       prereqs
+       exit 0
+       ;;
+esac
+
+. /scripts/casper-functions
+
+log_begin_msg "$DESCRIPTION"
+
+GDMCustomFile=/root/etc/gdm3/custom.conf
+
+if [ -f $GDMCustomFile ]; then
+    # Configure GDM autologin
+    sed -i -r \
+        -e "s/^#[ ]*AutomaticLoginEnable =.*\$/AutomaticLoginEnable=true/" \
+        -e "s/^#[ ]*AutomaticLogin =.*\$/AutomaticLogin=$USERNAME/" \
+	-e "s/^#[ ]*TimedLoginEnable =.*\$/TimedLoginEnable=false/" \
+        -e "s/^#[ ]*WaylandEnable=false\$/WaylandEnable=false/" \
+        $GDMCustomFile
+fi
+
+if [ -d /root/etc/lightdm ]; then
+    # Configure LightDM autologin
+    LightDMCustomFile=/root/etc/lightdm/lightdm.conf
+    AutologinParameters="allow-guest=false\n\
+autologin-guest=false\n\
+autologin-user=$USERNAME\n\
+autologin-user-timeout=0"
+
+    # Prevent from updating if parameters already present (persistent usb key)
+    if ! `grep -qs '^autologin-user' $LightDMCustomFile` ; then
+        if ! `grep -qs '\[SeatDefaults\]' $LightDMCustomFile` ; then
+            echo '[SeatDefaults]' >> $LightDMCustomFile
+        fi
+        sed -i "s/\[SeatDefaults\]/\[SeatDefaults\]\n$AutologinParameters/" $LightDMCustomFile
+    fi
+fi
+
+# Configure SDDM autologin
+if [ -f /root/usr/bin/sddm ]; then
+    # Kubuntu
+    if [ -f /root/usr/share/xsessions/kubuntu-live-environment.desktop ]; then
+        sddm_session=kubuntu-live-environment.desktop
+    # Ubuntu Studio
+    elif [ -f /root/usr/share/xsessions/plasma.desktop ]; then
+        sddm_session=plasma.desktop
+    # Lubuntu
+    elif [ -f /root/usr/share/xsessions/lubuntu-live-environment.desktop ]; then
+        sddm_session=lubuntu-live-environment.desktop
+    fi
+
+    cat >>/root/etc/sddm.conf <<EOF
+[Autologin]
+User=$USERNAME
+Session=$sddm_session
+EOF
+fi
+
+log_end_msg

@@ -1,0 +1,4 @@
+/scripts/local-block/cryptroot "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf
+/scripts/local-block/mdadm "$@"
+[ -e /conf/param.conf ] && . /conf/param.conf

@@ -1,0 +1,40 @@
+---
+- name: Phase A - Hardware Provisioning (Local Execution)
+  hosts: testB300
+  connection: local
+  gather_facts: false
+
+  vars:
+      # Note: If you want the serial number, it is at: /redfish/v1/Systems/1, body: "SerialNumber"
+      # UNCOMMENT the line below to use a manual link instead of the API
+      generated_iso_url: "http://50.191.180.130/isos/ubuntu-24.04.3-amd64.iso"
+
+  tasks:
+    # - name: Step 1 - Generate the ISO
+    #   ansible.builtin.include_tasks: ./tasks/getCustomISO.yml
+    #   when: generated_iso_url is not defined
+
+    # - name: Step 2 - Execute Redfish HW Sequence
+    #   ansible.builtin.include_tasks: ./tasks/B300/provisionB300HW.yml
+
+- name: Phase B - Post-Installation (SSH Execution)
+  hosts: testB300
+  connection: ssh
+  become: true
+  # Note: Ansible will now use your SSH credentials from inventory
+  tasks:
+    - name: Update and Upgrade with Retry
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: safe
+        # cache_valid_time: 3600  # Optional: Don't re-download if updated in last hour
+        dpkg_options: 'force-confold,force-confdef'
+      register: apt_result
+      until: apt_result is success
+      retries: 20            # Increased retries (cloud-init can sometimes take 5-10 mins)
+      delay: 30
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+  
+    - name: Step 5 - Install NVIDIA Drivers from Repo
+      ansible.builtin.include_tasks: tasks/B300/installNVDriversB300.yml

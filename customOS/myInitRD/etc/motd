@@ -1,0 +1,1 @@
+To unlock root partition, and maybe others like swap, run `cryptroot-unlock`.

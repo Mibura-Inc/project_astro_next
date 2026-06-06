@@ -1,0 +1,567 @@
+#!/bin/sh
+
+# Default PATH differs between shells, and is not automatically exported
+# by klibc dash.  Make it consistent.
+# Furthermore, this PATH ends up being used by the init, set it to the
+# Standard PATH, without /snap/bin as documented in
+# https://wiki.ubuntu.com/PATH
+# This also matches /etc/environment, but without games path
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[ -d /dev ] || mkdir -m 0755 /dev
+[ -d /root ] || mkdir -m 0700 /root
+[ -d /sys ] || mkdir /sys
+[ -d /proc ] || mkdir /proc
+[ -d /tmp ] || mkdir /tmp
+mkdir -p /var/lock
+mount -t sysfs -o nodev,noexec,nosuid sysfs /sys
+mount -t proc -o nodev,noexec,nosuid proc /proc
+
+# shellcheck disable=SC2013
+for x in $(cat /proc/cmdline); do
+	case $x in
+	initramfs.clear)
+		clear
+		;;
+	quiet)
+		quiet=y
+		;;
+	esac
+done
+
+if [ "$quiet" != "y" ]; then
+	quiet=n
+	echo "Loading, please wait..."
+fi
+export quiet
+
+# Note that this only becomes /dev on the real filesystem if udev's scripts
+# are used; which they will be, but it's worth pointing out
+mount -t devtmpfs -o nosuid,mode=0755 udev /dev
+
+# Prepare the /dev directory
+[ ! -h /dev/fd ] && ln -s /proc/self/fd /dev/fd
+[ ! -h /dev/stdin ] && ln -s /proc/self/fd/0 /dev/stdin
+[ ! -h /dev/stdout ] && ln -s /proc/self/fd/1 /dev/stdout
+[ ! -h /dev/stderr ] && ln -s /proc/self/fd/2 /dev/stderr
+
+mkdir /dev/pts
+mount -t devpts -o noexec,nosuid,gid=5,mode=0620 devpts /dev/pts || true
+
+# Export the dpkg architecture
+export DPKG_ARCH=
+. /conf/arch.conf
+
+# Set modprobe env
+export MODPROBE_OPTIONS="-qb"
+
+# Export relevant variables
+export ROOT=
+export ROOTDELAY=
+export ROOTFLAGS=
+export ROOTFSTYPE=
+export IP=
+export IP6=
+export VLAN=
+export DEVICE=
+export BOOT=
+export BOOTIF=
+export UBIMTD=
+export NETWORK_SKIP_ENSLAVED=
+export break=
+export init=/sbin/init
+export readonly=y
+export rootmnt=/root
+export debug=
+export panic=
+export blacklist=
+export resume=
+export resume_offset=
+export noresume=
+export drop_caps=
+export fastboot=n
+export forcefsck=n
+export fsckfix=
+
+
+# mdadm needs hostname to be set. This has to be done before the udev rules are called!
+if [ -f "/etc/hostname" ]; then
+        /bin/hostname -F /etc/hostname >/dev/null 2>&1
+fi
+
+# Bring in the main config
+. /conf/initramfs.conf
+for conf in conf/conf.d/*; do
+	[ -f "${conf}" ] && . "${conf}"
+done
+. /scripts/functions
+
+# Parse command line options
+# shellcheck disable=SC2013
+for x in $(cat /proc/cmdline); do
+	case $x in
+	init=*)
+		init=${x#init=}
+		;;
+	root=*)
+		ROOT=${x#root=}
+		if [ -z "${BOOT}" ] && [ "$ROOT" = "/dev/nfs" ]; then
+			BOOT=nfs
+		fi
+		;;
+	rootflags=*)
+		ROOTFLAGS="-o ${x#rootflags=}"
+		;;
+	rootfstype=*)
+		ROOTFSTYPE="${x#rootfstype=}"
+		;;
+	rootdelay=*)
+		ROOTDELAY="${x#rootdelay=}"
+		case ${ROOTDELAY} in
+		*[![:digit:].]*)
+			ROOTDELAY=
+			;;
+		esac
+		;;
+	roottimeout=*)
+		ROOTDELAY="${x#roottimeout=}"
+		case ${ROOTDELAY} in
+		*[![:digit:].]*)
+			ROOTDELAY=
+			;;
+		esac
+		;;
+	loop=*)
+		# shellcheck disable=SC2034
+		LOOP="${x#loop=}"
+		;;
+	loopflags=*)
+		# shellcheck disable=SC2034
+		LOOPFLAGS="-o ${x#loopflags=}"
+		;;
+	loopfstype=*)
+		# shellcheck disable=SC2034
+		LOOPFSTYPE="${x#loopfstype=}"
+		;;
+	nfsroot=*)
+		# shellcheck disable=SC2034
+		NFSROOT="${x#nfsroot=}"
+		;;
+	initramfs.runsize=*)
+		RUNSIZE="${x#initramfs.runsize=}"
+		;;
+	ip=*)
+		IP="${x#ip=}"
+		;;
+	ip6=*)
+		IP6="${x#ip6=}"
+		;;
+	vlan=*)
+		VLAN="${x#vlan=}"
+		;;
+	boot=*)
+		BOOT=${x#boot=}
+		;;
+	ubi.mtd=*)
+		UBIMTD=${x#ubi.mtd=}
+		;;
+	resume=*)
+		RESUME="${x#resume=}"
+		;;
+	resume_offset=*)
+		resume_offset="${x#resume_offset=}"
+		;;
+	noresume)
+		noresume=y
+		;;
+	drop_capabilities=*)
+		drop_caps="-d ${x#drop_capabilities=}"
+		;;
+	panic=*)
+		panic="${x#panic=}"
+		;;
+	ro)
+		readonly=y
+		;;
+	rw)
+		readonly=n
+		;;
+	debug)
+		debug=y
+		quiet=n
+		if [ -n "${netconsole}" ]; then
+			log_output=/dev/kmsg
+		else
+			log_output=/run/initramfs/initramfs.debug
+		fi
+		set -x
+		;;
+	debug=*)
+		debug=y
+		quiet=n
+		set -x
+		;;
+	break=*)
+		break=${x#break=}
+		;;
+	break)
+		break=premount
+		;;
+	blacklist=*)
+		blacklist=${x#blacklist=}
+		;;
+	netconsole=*)
+		netconsole=${x#netconsole=}
+		[ "$debug" = "y" ] && log_output=/dev/kmsg
+		;;
+	BOOTIF=*)
+		BOOTIF=${x#BOOTIF=}
+		;;
+	hwaddr=*)
+		BOOTIF=${x#hwaddr=}
+		;;
+	fastboot|fsck.mode=skip)
+		fastboot=y
+		;;
+	forcefsck|fsck.mode=force)
+		forcefsck=y
+		;;
+	fsckfix|fsck.repair=yes)
+		fsckfix=y
+		;;
+	fsck.repair=no)
+		fsckfix=n
+		;;
+	esac
+done
+
+# Default to BOOT=local if no boot script defined.
+if [ -z "${BOOT}" ]; then
+	BOOT=local
+fi
+
+if [ -n "${noresume}" ] || [ "$RESUME" = none ]; then
+	noresume=y
+else
+	case $RESUME in
+	UUID=*)
+		RESUME="/dev/disk/by-uuid/${RESUME#UUID=}"
+	esac
+	resume=${RESUME:-}
+fi
+
+mount -t tmpfs -o "nodev,noexec,nosuid,size=${RUNSIZE:-10%},mode=0755" tmpfs /run
+mkdir -m 0700 /run/initramfs
+
+if [ -n "$log_output" ]; then
+	exec >"$log_output" 2>&1
+	unset log_output
+fi
+
+maybe_break top
+
+# Don't do log messages here to avoid confusing graphical boots
+run_scripts /scripts/init-top
+
+maybe_break modules
+[ "$quiet" != "y" ] && log_begin_msg "Loading essential drivers"
+[ -n "${netconsole}" ] && /sbin/modprobe netconsole netconsole="${netconsole}"
+load_modules
+[ "$quiet" != "y" ] && log_end_msg
+
+starttime="$(_uptime)"
+starttime=$((starttime + 1)) # round up
+export starttime
+
+# maybe_break premount
+# [ "$quiet" != "y" ] && log_begin_msg "Running /scripts/init-premount"
+# run_scripts /scripts/init-premount
+# [ "$quiet" != "y" ] && log_end_msg
+
+case "$IP" in
+""|none|off)
+	case "$IP6" in
+	""|none|off) ;; # Do nothing
+	*)
+		configure_networking
+	esac
+	;;
+*)
+	configure_networking
+esac
+
+#------------------
+
+#!/bin/busybox-amd64 sh
+
+# 1. Setup the environment
+# We use the absolute path to the binary since symlinks aren't installed yet
+# /bin/busybox-amd64 mkdir -p /proc /sys /dev /bin
+
+# 2. Mount essential filesystems
+# devtmpfs is critical for populating /dev/ (like /dev/console)
+# /bin/busybox-amd64 mount -t proc proc /proc
+# /bin/busybox-amd64 mount -t sysfs sysfs /sys
+# /bin/busybox-amd64 mount -t devtmpfs devtmpfs /dev
+
+# 3. Install applets
+# This creates the symlinks (ls, cat, mount, etc.) in /bin
+/bin/busybox-amd64 --install -s /bin
+
+echo "------------------------------------------"
+echo "Default Initramfs Booted (AMD64)"
+echo "------------------------------------------"
+
+get_cmdline_var() {
+  var="$1"
+  for x in $(cat /proc/cmdline); do
+    case "$x" in
+      $var=*) echo "${x#*=}"; return ;;
+    esac
+  done
+}
+
+mask2cidr() {
+  mask=$1
+  cidr=0
+  IFS=. read -r i1 i2 i3 i4 <<EOF
+$mask
+EOF
+  for i in $i1 $i2 $i3 $i4; do
+    case $i in
+      255) cidr=$((cidr+8));;
+      254) cidr=$((cidr+7));;
+      252) cidr=$((cidr+6));;
+      248) cidr=$((cidr+5));;
+      240) cidr=$((cidr+4));;
+      224) cidr=$((cidr+3));;
+      192) cidr=$((cidr+2));;
+      128) cidr=$((cidr+1));;
+      0);;
+      *) echo "Invalid netmask"; return 1;;
+    esac
+  done
+  echo "$cidr"
+}
+
+IP_PARAM="$(get_cmdline_var ip)"
+BOOTIF_RAW="$(get_cmdline_var BOOTIF)"
+
+BOOTIF="$(echo "$BOOTIF_RAW" | sed 's/^01-//' | tr 'A-F' 'a-f' | tr '-' ':')"
+
+
+# -----------------------------------------------
+# Information Collection
+
+echo "Collecting system identity..."
+
+# --- Machine Serial (DO NOT overwrite later)
+MACHINE_SERIAL=""
+
+if [ -r /sys/class/dmi/id/product_serial ]; then
+    MACHINE_SERIAL="$(cat /sys/class/dmi/id/product_serial 2>/dev/null)"
+fi
+
+if [ -z "$MACHINE_SERIAL" ] && [ -r /sys/class/dmi/id/board_serial ]; then
+    MACHINE_SERIAL="$(cat /sys/class/dmi/id/board_serial 2>/dev/null)"
+fi
+
+if [ -z "$MACHINE_SERIAL" ] && [ -r /etc/machine-id ]; then
+    MACHINE_SERIAL="$(cat /etc/machine-id 2>/dev/null)"
+fi
+
+[ -z "$MACHINE_SERIAL" ] && MACHINE_SERIAL="unknown"
+
+echo "Machine Serial: $MACHINE_SERIAL"
+
+# --- JobID
+JOBID="$(get_cmdline_var jobid)"
+[ -z "$JOBID" ] && JOBID="unknown"
+
+echo "Job ID: $JOBID"
+
+# --- SERVER_IP
+SERVER_IP="$(get_cmdline_var serverip)"
+echo "Server IP: $SERVER_IP"
+# Fallback safety default just in case it's missing
+# if [ -z "$SERVER_IP" ]; then
+#     echo "WARNING: 'astro_server_ip' variable missing"
+#     echo "Falling back to hardcoded default: 50.191.180.133"
+#     SERVER_IP="50.191.180.133"
+# fi
+
+# ---------------------------------------------
+# Disk Inventory
+
+echo "Collecting disk identities..."
+
+DISKS_JSON="["
+
+FIRST=1
+
+for d in /sys/block/*; do
+    DEV="$(basename "$d")"
+
+    case "$DEV" in
+        loop*|ram*) continue ;;
+    esac
+
+    SIZE_KB="$(cat /sys/block/$DEV/size 2>/dev/null)"
+    SIZE_MB=$((SIZE_KB / 2048))
+
+    BYID=""
+
+    for id in /dev/disk/by-id/*; do
+        [ -e "$id" ] || continue
+        TARGET="$(basename "$(readlink -f "$id")")"
+
+        if [ "$TARGET" = "$DEV" ]; then
+            BYID="$(basename "$id")"
+            break
+        fi
+    done
+
+    MODEL=""
+    SERIAL=""
+
+    if [ -z "$BYID" ]; then
+        MODEL="$(cat /sys/block/$DEV/device/model 2>/dev/null)"
+        SERIAL="$(cat /sys/block/$DEV/device/serial 2>/dev/null)"
+        BYID="${MODEL:-unknown}_${SERIAL:-unknown}"
+    fi
+
+    # JSON append
+    [ "$FIRST" -eq 0 ] && DISKS_JSON="$DISKS_JSON,"
+    FIRST=0
+
+    DISKS_JSON="$DISKS_JSON{\"dev\":\"$DEV\",\"id\":\"$BYID\",\"size_mb\":$SIZE_MB}"
+
+done
+
+DISKS_JSON="$DISKS_JSON]"
+
+echo "Disk inventory ready"
+
+# I think this needs rotational to check HDDs but i will assume everything is ssd and no fool plug in their USBs.
+
+# ---------------------------------------------
+# Send it
+# PAYLOAD="{\"jobid\":\"$JOBID\",\"machine_serial\":\"$MACHINE_SERIAL\",\"disks\":$DISKS_JSON}"
+
+# printf "POST /report HTTP/1.1\r\nHost: 50.191.180.133\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
+#   "${#PAYLOAD}" "$PAYLOAD" | nc 50.191.180.133 8000
+
+# ------------------------------------------
+
+sleep 10
+
+API_URL="http://${SERVER_IP}/api/v1/servers"
+AUTOMATION_URL="http://${SERVER_IP}/automation"
+PORT="8000"
+echo "Phoning home to API..."
+# The server.py expects 'job_id' and 'uuids'
+# We use $DISKS_JSON for the 'uuids' field to help the server decide on the drive
+# PAYLOAD="{\"job_id\":\"$JOBID\",\"machine_serial\":\"$MACHINE_SERIAL\",\"uuids\":$DISKS_JSON}"
+PAYLOAD="{\"job_id\":\"$JOBID\",\"machine_serial\":\"$MACHINE_SERIAL\",\"bootif\":\"$BOOTIF_RAW\",\"uuids\":$DISKS_JSON}"
+# printf "POST /api/v1/servers/phone-home HTTP/1.1\r\nHost: ${SERVER_IP}\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
+# "${#PAYLOAD}" "$PAYLOAD" | nc ${SERVER_IP} ${PORT}
+
+# The above is not working with nginx because the client closes the connection before receiving a response
+PAYLOAD_LEN=$(printf "%s" "$PAYLOAD" | wc -c)
+(
+  printf "POST /api/v1/servers/phone-home HTTP/1.1\r\n"
+  printf "Host: ${SERVER_IP}\r\n"
+  printf "Content-Type: application/json\r\n"
+  printf "Content-Length: %d\r\n" "$PAYLOAD_LEN"
+  printf "Connection: close\r\n\r\n"
+  printf "%s" "$PAYLOAD"
+  sleep 2
+) | nc -w 5 "${SERVER_IP}" ${PORT} | cat
+
+echo "Phone home complete. API should have updated user-data."
+echo " - user-data"
+echo " - meta-data"
+echo " - installer-launch.sh"
+
+# Ensure DNS exists
+[ ! -s /etc/resolv.conf ] && echo "nameserver 8.8.8.8" > /etc/resolv.conf
+
+sleep 5
+
+echo "Fetching dynamic instructions from server installer-launch.sh..."
+# Download the script the server just built for this specific Job ID
+wget -O /tmp/installer-launch.sh \
+${AUTOMATION_URL}/${JOBID}/installer-launch.sh || {
+    echo "ERROR: Failed to fetch installer-launch.sh"
+    exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
+}
+
+chmod +x /tmp/installer-launch.sh
+echo ""
+echo "Executing installer-launch.sh..."
+sh /tmp/installer-launch.sh
+
+# http://releases.ubuntu.com/24.04/netboot/amd64/linux
+# wget -O /linux http://50.191.180.130/automation/ubuntu-22.04.5/amd64/linux || {
+#     echo "ERROR: Failed to download kernel"
+#     exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
+# }
+
+# echo "Downloading Ubuntu initrd..."
+# # http://releases.ubuntu.com/24.04/netboot/amd64/initrd
+# wget -O /initrd http://50.191.180.130/automation/ubuntu-22.04.5/amd64/initrd || {
+#     echo "ERROR: Failed to download initrd" 
+#     exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
+# }
+
+# echo "Download complete!"
+# ls -l /linux /initrd
+
+# #--------------------------------------------
+# # check item reachability
+
+# wget -q -O /dev/null http://50.191.180.133:8080/$JOBID/user-data || {
+#     echo "ERROR: cloud-init not ready"
+#     exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
+# }
+
+#------------------------------------------
+
+# echo "Preparing kexec..."
+
+# \
+# # http://releases.ubuntu.com/24.04/ubuntu-24.04.3-live-server-amd64.iso
+# APPEND="ip=${IP_PARAM} BOOTIF=${BOOTIF_RAW} \
+# url=http://releases.ubuntu.com/22.04/ubuntu-22.04.5-live-server-amd64.iso \ 
+# autoinstall ds=nocloud-net;s=http://50.191.180.133:8080/${JOBID}/ \
+# cloud-config-url=/dev/null \
+# cloud-init=debug \
+# multipath=off \
+# nvme_core.multipath=0 \
+# rd.multipath=0 \
+# fs-path=casper root=tmpfs ignore_uuid \
+# console=ttyS0,115200 console=tty0 \
+# systemd.log_level=info ---"
+
+# # safeguard: only include BOOTIF if present
+# [ -z "$BOOTIF_RAW" ] && APPEND="$(echo "$APPEND" | sed 's/ BOOTIF=[^ ]*//')"
+
+# echo "Kernel cmdline for next boot:"
+# echo "$APPEND"
+
+# Load kernel
+# /bin/kexec-amd64 -l /linux \
+#   --initrd=/initrd \
+#   --append="$APPEND" || {
+#     echo "ERROR: kexec load failed"
+#     exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
+# }
+
+# # Execute
+# echo "Executing kexec..."
+# /bin/kexec-amd64 -e
+
+# # 7. Start interactive shell with network access
+# echo ""
+# echo "Starting interactive shell..."
+# exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0

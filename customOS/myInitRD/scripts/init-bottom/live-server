@@ -1,0 +1,11 @@
+#!/bin/sh
+case $1 in
+prereqs) exit 0;;
+esac
+
+echo linux-generic-hwe-24.04 > /run/kernel-meta-package
+
+mkdir -p ${rootmnt}/media/filesystem ${rootmnt}/media/full ${rootmnt}/media/minimal
+mount -o ro -t squashfs ${rootmnt}/cdrom/casper/ubuntu-server-minimal.squashfs ${rootmnt}/media/minimal
+mount -o ro -t squashfs ${rootmnt}/cdrom/casper/ubuntu-server-minimal.ubuntu-server.squashfs ${rootmnt}/media/full
+mount -o ro,lowerdir=${rootmnt}/media/full:${rootmnt}/media/minimal -t overlay overlay ${rootmnt}/media/filesystem

@@ -1,0 +1,167 @@
+---
+
+# --- DOCA & BUILD DEPENDENCIES ---
+
+- name: Get kernel version
+  ansible.builtin.command: uname -r
+  register: kernel_out
+  changed_when: false
+
+- name: 1. Install Build Dependencies and Headers
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - libxml2-utils
+      - perl
+      - python3-setuptools
+      - pkg-config
+      - python3-venv
+      - "linux-headers-{{ kernel_out.stdout }}" # Matches the 64k kernel version
+    state: present
+    update_cache: yes
+
+- name: 2. Download DOCA Host Repo Package
+  ansible.builtin.get_url:
+    url: "https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-ubuntu2404_amd64.deb"
+    dest: "/tmp/doca-repo.deb"
+    mode: '0644'
+
+- name: 3. Install DOCA Repo Configuration
+  ansible.builtin.apt:
+    deb: "/tmp/doca-repo.deb"
+
+- name: 4. Install DOCA-ALL
+  ansible.builtin.apt:
+    name: doca-all
+    state: present
+    update_cache: yes
+  register: doca_install
+
+- name: Optimize Kernel for B300 RDMA
+  ansible.posix.sysctl:
+    name: kernel.numa_balancing
+    value: '0'
+    state: present
+    reload: yes
+
+- name: 6. Reboot to Load DOCA
+  ansible.builtin.reboot:
+    msg: "Rebooting to initialize DOCA on {{ ansible_facts['hostname'] }}"
+    reboot_timeout: 600
+  when: doca_install.changed
+
+# --- nvidia-open driver ---
+
+- name: 1. Set Dynamic Repository Facts (Future-Proofed)
+  ansible.builtin.set_fact:
+    # Uses the recommended ansible_facts dictionary to avoid deprecation warnings
+    nvidia_repo_id: "ubuntu{{ ansible_facts['distribution_version'] | replace('.', '') }}"
+    nvidia_arch: "{{ 'sbsa' if ansible_facts['architecture'] == 'aarch64' else 'x86_64' }}"
+
+- name: 2. Download NVIDIA GPG Key
+  ansible.builtin.get_url:
+    url: "https://developer.download.nvidia.com/compute/cuda/repos/{{ nvidia_repo_id }}/{{ nvidia_arch }}/cuda-archive-keyring.gpg"
+    dest: /usr/share/keyrings/cuda-archive-keyring.gpg
+    mode: '0644'
+
+- name: 3. Add NVIDIA CUDA Repository Dynamically
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/{{ nvidia_repo_id }}/{{ nvidia_arch }}/ /"
+    state: present
+    filename: nvidia-cuda
+
+- name: 4. Update Apt Cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: 5. Install Latest NVIDIA Open Driver
+  ansible.builtin.apt:
+    name: 
+    - nvidia-open
+    - nvlsm
+    state: present
+  register: driver_install
+
+- name: 6. Reboot to Load NVIDIA Open Modules
+  ansible.builtin.reboot:
+    msg: "Rebooting to initialize NVIDIA Open Drivers on {{ ansible_facts['hostname'] }}"
+    reboot_timeout: 600
+  when: driver_install.changed
+
+# --- NVIDIA Fabric Manager
+
+- name: 1. Install NVIDIA Fabric Manager
+  ansible.builtin.apt:
+    name: "nvidia-fabricmanager"
+    state: present
+    update_cache: true
+
+- name: 3. Verify Fabric Manager state
+  ansible.builtin.command: systemctl is-active nvidia-fabricmanager
+  register: fm_status
+  changed_when: false
+  failed_when: fm_status.rc != 0
+
+- name: 4. Wait for NVLink training to complete
+  ansible.builtin.pause:
+    seconds: 5
+    prompt: "Allowing NVSwitch fabric to initialize..."
+
+- name: Set persistence mode to enabled for all GPUs
+  ansible.builtin.shell: nvidia-smi -pm 1
+  register: persistence_result
+  changed_when: " 'already Enabled' not in persistence_result.stdout "
+
+- name: Ensure nvidia-persistenced service is started and enabled
+  ansible.builtin.systemd:
+    name: nvidia-persistenced
+    state: started
+    enabled: yes
+
+- name: 6. Reboot to Load all modules
+  ansible.builtin.reboot:
+    msg: "Rebooting to Load all modules {{ ansible_facts['hostname'] }}"
+    reboot_timeout: 600
+  when: persistence_result.changed
+
+# --- Final Check ---
+
+- name: 5. Check NVLink status across all 8 GPUs
+  ansible.builtin.command: nvidia-smi nvlink -s
+  register: nvlink_check
+  changed_when: false
+
+- name: 6. Fail if any NVLink is down
+  ansible.builtin.fail:
+    msg: "NVLink is not fully operational! Check 'nvswitch' logs."
+  when: "'Inactive' in nvlink_check.stdout or 'Down' in nvlink_check.stdout"
+
+- name: 7. Run Final NVIDIA Vibe Check
+  ansible.builtin.command: nvidia-smi -L  # -L is a "List" format, much easier to parse
+  register: smi_final
+
+- name: 8. Report Final Status
+  ansible.builtin.debug:
+    msg: 
+      - "------------------------------------------------"
+      - "B300 PROVISIONING COMPLETE"
+      - "GPU Detected: {{ smi_final.stdout }}"
+      - "------------------------------------------------"
+
+- name: 9. Verify Topology
+  ansible.builtin.command: nvidia-smi topo -m
+  register: topo_out
+
+- name: 10. Check CPU-GPU Affinity (NUMA)
+  ansible.builtin.command: numactl -H
+  register: numa_out
+  ignore_errors: yes
+
+- name: 11. Final Architecture Report
+  ansible.builtin.debug:
+    msg: 
+      - "--- Topology Matrix ---"
+      - "{{ topo_out.stdout_lines }}"
+      - "--- NUMA Nodes (Look for GPU memory as a separate node) ---"
+      - "{{ numa_out.stdout_lines | default('numactl not installed') }}"
+

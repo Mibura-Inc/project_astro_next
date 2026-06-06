@@ -1,0 +1,64 @@
+#!/bin/sh
+set -e
+
+# dhcpcd client hook to write /run/net*.conf files compatible to ipconfig from klibc-utils
+
+# Ensure that the search domain ends with dots
+domain_search_with_trailing_dots() {
+	local domain_search=""
+	for domain in $1; do
+		domain_search="${domain_search}${domain_search:+ }${domain%.}."
+	done
+	echo "$domain_search"
+}
+
+write_dhcp_netinfo() {
+	local domain_search netinfo_path="$1"
+
+	domain_search=$(domain_search_with_trailing_dots "${new_domain_search-}")
+	cat >"$netinfo_path" << EOF
+DEVICE='${interface-}'
+PROTO='${protocol-}'
+IPV4ADDR='${new_ip_address-}'
+IPV4BROADCAST='${new_broadcast_address-}'
+IPV4NETMASK='${new_subnet_mask-}'
+IPV4GATEWAY='${new_routers-}'
+IPV4DNS0='${new_domain_name_servers-}'
+HOSTNAME='${new_host_name-}'
+DNSDOMAIN='${new_domain_name-}'
+ROOTSERVER='${new_routers-}'
+filename='${new_filename-}'
+DHCPLEASETIME='${new_dhcp_lease_time-}'
+DOMAINSEARCH='${domain_search}'
+EOF
+}
+
+write_dhcp6_netinfo() {
+	local domain_search netinfo_path="$1"
+
+	domain_search=$(domain_search_with_trailing_dots "${new_dhcp6_domain_search-}")
+	cat >"$netinfo_path" << EOF
+DEVICE6='${interface-}'
+IPV6PROTO='${protocol-}'
+IPV6ADDR='${new_dhcp6_ia_na1_ia_addr1-}'
+IPV6NETMASK='128'
+IPV6DNS0='${new_dhcp6_name_servers-}'
+IPV6DOMAINSEARCH='${domain_search}'
+EOF
+}
+
+if ${if_configured?}; then
+	if ${if_up?}; then
+		if [ "${protocol?}" = dhcp ]; then
+			write_dhcp_netinfo "/run/net-${interface?}.conf"
+		elif [ "${protocol}" = dhcp6 ]; then
+			write_dhcp6_netinfo "/run/net6-${interface?}.conf"
+		fi
+	elif ${if_down?}; then
+		if [ "${protocol?}" = dhcp ]; then
+			rm -f "/run/net-${interface?}.conf"
+		elif [ "${protocol}" = dhcp6 ]; then
+			rm -f "/run/net6-${interface?}.conf"
+		fi
+	fi
+fi

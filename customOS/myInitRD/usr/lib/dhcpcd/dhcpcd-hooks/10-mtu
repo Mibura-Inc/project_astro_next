@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+# Configure the MTU for the interface
+# See https://github.com/NetworkConfiguration/dhcpcd/issues/67 and https://launchpad.net/bugs/2056194
+
+set_mtu() {
+	local mtu="$1" interface="$2"
+
+	if [ "$mtu" -lt 576 ]; then
+		echo "MTU $mtu is smaller than 576 which is the minimum for dhcpcd. Ignoring MTU." >&2
+		return
+	fi
+
+	echo "${mtu}" > "/sys/class/net/${interface}/mtu"
+	echo "MTU of ${interface} set to ${mtu}"
+}
+
+if ${if_up?} && [ -n "${new_interface_mtu-}" ]; then
+	set_mtu "${new_interface_mtu}" "${interface?}"
+fi

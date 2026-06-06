@@ -1,0 +1,134 @@
+---
+
+- name: Install dependencies
+  ansible.builtin.apt:
+    name: 
+      - gpg
+      - curl
+    state: present
+    update_cache: yes
+
+- name: Create directory for GPG key
+  ansible.builtin.file:
+    path: /usr/share/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Add NVIDIA Container Toolkit GPG key
+  ansible.builtin.shell: |
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  args:
+    creates: /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+- name: Add NVIDIA Container Toolkit repository
+  ansible.builtin.shell: |
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  args:
+    creates: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+- name: 0. Update cache and install toolkit
+  apt:
+    name: nvidia-container-toolkit
+    update_cache: yes
+    state: present
+
+- name: Verify toolkit installation path
+  command: which nvidia-container-runtime
+  register: toolkit_path
+  changed_when: false
+
+- debug:
+    msg: "Toolkit installed at {{ toolkit_path.stdout }}"
+
+- name: 1. Install K3s with Primary Interface Binding
+  shell: |
+    PRIMARY_IP=$(ip route get 1.1.1.1 | awk '{print $7}')
+    PRIMARY_IFACE=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)')
+    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 \
+      --node-ip=$PRIMARY_IP \
+      --flannel-iface=$PRIMARY_IFACE \
+      --node-external-ip=$PRIMARY_IP
+  args:
+    creates: /usr/local/bin/k3s
+
+- name: Create .kube directory for {{ ansible_user }}
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/.kube"
+    state: directory
+    mode: '0755'
+
+- name: Copy K3s config to user home
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    # Manually construct the path to bypass the root HOME issue
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    remote_src: yes
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0600'
+  become: true
+
+- name: Add KUBECONFIG to bashrc
+  ansible.builtin.lineinfile:
+    path: "{{ ansible_facts['env']['HOME'] }}/.bashrc"
+    line: 'export KUBECONFIG=$HOME/.kube/config'
+    state: present
+
+- name: Source bashrc to apply KUBECONFIG immediately
+  ansible.builtin.shell: |
+    source {{ ansible_facts['env']['HOME'] }}/.bashrc
+  args:
+    executable: /bin/bash
+
+- name: 3. Install Helm
+  shell: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+
+- name: 4. Deploy NVIDIA GPU Operator (GH200 Optimized)
+  shell: |
+    helm repo add nvidia https://nvidia.github.io/gpu-operator
+    helm repo update
+    helm upgrade --install gpu-operator nvidia/gpu-operator \
+      -n gpu-operator --create-namespace \
+      --set driver.enabled=false \
+      --set toolkit.enabled=false \
+      --set operator.defaultRuntime=nvidia \
+      --set devicePlugin.enabled=true \
+      --set gfd.enabled=true \
+      --set "devicePlugin.tolerations[0].operator=Exists" \
+      --set "nfd.worker.tolerations[0].operator=Exists"
+  environment:
+    KUBECONFIG: "/etc/rancher/k3s/k3s.yaml"
+
+- name: Configure K3s Containerd for NVIDIA
+  shell: |
+    nvidia-ctk runtime configure --runtime=containerd --config=/var/lib/rancher/k3s/agent/etc/containerd/config.toml
+    systemctl restart k3s
+
+- name: 5. Setup SkyPilot Environment
+  become: false
+  block:
+    - name: Install dependencies
+      become: true
+      apt:
+        name: [python3-pip, python3-venv, socat]
+        state: present
+
+- name: Ensure KUBECONFIG is exported in .bashrc
+  ansible.builtin.lineinfile:
+    path: "/home/{{ ansible_user }}/.bashrc"
+    line: "export KUBECONFIG=/home/{{ ansible_user }}/.kube/config"
+    state: present
+  become: false
+
+- name: Create venv and install SkyPilot
+  ansible.builtin.pip:
+    name: "skypilot[kubernetes]"
+    # Explicitly define the path to avoid /root/ permissions issues
+    virtualenv: "/home/{{ ansible_user }}/sky-env"
+    virtualenv_command: "/usr/bin/python3 -m venv"
+  # Run this as the regular user, NOT as root/become
+  become: false

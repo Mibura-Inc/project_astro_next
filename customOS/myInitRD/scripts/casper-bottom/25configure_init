@@ -1,0 +1,37 @@
+#!/bin/sh
+
+PREREQ=""
+DESCRIPTION="Setting up init..."
+
+prereqs()
+{
+       echo "$PREREQ"
+}
+
+case $1 in
+# get pre-requisites
+prereqs)
+       prereqs
+       exit 0
+       ;;
+esac
+
+. /scripts/casper-functions
+
+log_begin_msg "$DESCRIPTION"
+
+if [ -n "$USERNAME" ]; then
+	# Since we use autologin, lastlog doesn't make sense on the console.
+	sed -i '/^[^#].*pam_lastlog\.so/s/^/# /' /root/etc/pam.d/login
+fi
+
+# This has the nice side effect of the cron.{daily,weekly,monthly} jobs in
+# /etc/crontab remaining disabled, yet also not run by anacron
+if [ -x /root/usr/sbin/anacron ]; then
+	chroot /root dpkg-divert --add --rename --quiet /usr/sbin/anacron
+	ln -s /bin/true /root/usr/sbin/anacron
+fi
+
+log_end_msg
+
+exit 0

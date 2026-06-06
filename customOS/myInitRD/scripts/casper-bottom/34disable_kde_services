@@ -1,0 +1,34 @@
+#! /bin/sh
+
+PREREQ=""
+DESCRIPTION="Disabling unnecessary KDE services..."
+
+prereqs()
+{
+       echo "$PREREQ"
+}
+
+case $1 in
+# get pre-requisites
+prereqs)
+       prereqs
+       exit 0
+       ;;
+esac
+
+. /scripts/casper-functions
+
+log_begin_msg "$DESCRIPTION"
+
+for pkg in kubuntu-default-settings ubuntustudio; do
+	settingsdir="/root/usr/share/$pkg/kf5-settings"
+	[ -d "$settingsdir" ] || continue
+	printf "[Daemon]\nTimeout=0\nAutolock=false\nLockOnResume=false\n" >> "$settingsdir"/kscreenlockerrc
+	printf "[Basic Settings]\nIndexing-Enabled=false\n" >> "$settingsdir"/baloofilerc
+	printf "[Module-notificationhelper]\nautoload=false\n" >> "$settingsdir"/kded5rc
+	printf "[Event/Update]\nAction=\n" >> "$settingsdir"/muonabstractnotifier.notifyrc
+	printf "[Event/Update]\nAction=\n" >> "$settingsdir"/muonapplicationnotifier.notifyrc
+	printf "[Wallet]\nEnabled=false\n" >> "$settingsdir"/kwalletrc
+done
+
+log_end_msg

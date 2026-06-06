@@ -1,0 +1,93 @@
+#!ipxe
+echo ====================================================================
+echo Astro Provisioning System - Static IP (single-seed, auto-detect)
+echo ====================================================================
+echo Job ID:        __JOB_ID__
+echo OS:            __OS_VER__
+echo Arch:          __ARCH__
+echo Payload base:  __BASE__
+echo Static IP:     __IPV4__
+echo Gateway:       __GW__
+echo Netmask:       __MASK__
+echo DNS (primary): __DNS_PRIMARY__
+echo ====================================================================
+
+echo Detecting network interfaces...
+ifstat
+
+# Try each interface from net0 to net9 to find one that works
+set idx:int8 0
+:try_interface
+echo
+echo Trying net${idx}...
+
+# Skip non-existent interfaces
+isset ${net${idx}/mac} || goto next_interface
+
+# Open interface; if it fails, move on
+ifopen net${idx} || goto next_interface
+echo Sleeping for 30 seconds, thanks to Cisco STP
+sleep 30
+
+# Configure static IP on this interface
+echo Configuring static IP on net${idx}...
+set net${idx}/ip __IPV4__       || goto cleanup_interface
+set net${idx}/netmask __MASK__  || goto cleanup_interface
+set net${idx}/gateway __GW__    || goto cleanup_interface
+set dns __DNS_PRIMARY__         || goto cleanup_interface
+
+# Test if gateway is reachable with ping (if available)
+echo Testing gateway reachability on net${idx}...
+ping --count 3 --timeout 2000 1.1.1.1 && goto found_interface || goto cleanup_interface
+
+:cleanup_interface
+echo net${idx} cannot reach gateway, closing and trying next
+ifclose net${idx}
+goto next_interface
+
+:next_interface
+inc idx ||
+iseq ${idx} 10 && goto failed ||
+goto try_interface
+
+:found_interface
+echo Network interface net${idx} configured successfully
+# Use the probed iPXE interface for BOOTIF
+set bootif_mac 01-${net${idx}/mac:hexhyp}
+
+echo Waiting 3 seconds for network to stabilize...
+sleep 3
+
+echo Network configuration:
+echo   Interface: net${idx} (MAC: ${net${idx}/mac})
+echo   IP:        ${net${idx}/ip}
+echo   Netmask:   ${net${idx}/netmask}
+echo   Gateway:   ${net${idx}/gateway}
+echo   DNS:       ${dns}
+echo ====================================================================
+echo Kernel cmdline preview:
+echo   ip=__IPV4__::__GW__:__MASK__:::off:__DNS_PRIMARY__
+echo   BOOTIF=${bootif_mac}
+echo   jobid=__JOB_ID__
+echo   serverip=__SERVER_IP__ 
+echo ====================================================================
+
+kernel __KERNEL_URL__ \
+  ip=__IPV4__::__GW__:__MASK__:::off:__DNS_PRIMARY__ \
+  BOOTIF=${bootif_mac} \
+  jobid=__JOB_ID__ \
+  serverip=__SERVER_IP__ \
+  init=/init
+
+# 1. Load the official drivers/scripts first
+initrd __INITRD_URL__
+
+# 2. Load our custom 'phone-home' logic now
+initrd __CUSTOM_OS_URL__/customOS/initramfs.cpio.gz
+boot
+
+:failed
+echo ===== NETWORK CONFIGURATION FAILED =====
+echo Could not find a working network interface that can reach gateway __GW__
+echo Tried interfaces net0 through net9
+shell

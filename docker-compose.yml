@@ -1,0 +1,12 @@
+services:
+  ipxe-builder:
+    image: ipxe-builder:local
+    build:
+      context: ./Docker
+    volumes:
+      - .:/work
+    ports:
+      - "8000:8000"
+    stdin_open: true # Equivalent to -i
+    tty: true        # Equivalent to -t
+    entrypoint: /bin/bash

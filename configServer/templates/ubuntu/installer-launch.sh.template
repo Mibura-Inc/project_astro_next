@@ -1,0 +1,58 @@
+#!/bin/sh
+set -ux
+
+echo "Astro Installer Launch Script"
+
+echo "[1/4] Configuring DNS..."
+grep -q nameserver /etc/resolv.conf 2>/dev/null || \
+echo 'nameserver __DNS_PRIMARY__' > /etc/resolv.conf
+
+echo "[2/4] Downloading kernel and initrd..."
+wget -O /linux "__KERNEL_URL__" || {
+    echo "ERROR: Failed to download kernel"
+    exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
+}
+
+wget -O /initrd "__INITRD_URL__" || {
+    echo "ERROR: Failed to download initrd"
+    exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
+}
+
+echo "[3/4] Download complete"
+ls -lh /linux /initrd
+
+# APPEND="ip=__IPV4_ADDRESS__::__IPV4_GATEWAY__:__IPV4_NETMASK__:::off:__DNS_PRIMARY__ \
+APPEND="ip=__IPV4_ADDRESS__::__IPV4_GATEWAY__:__IPV4_NETMASK__:__HOSTNAME__:__INTERFACE__:off:__DNS_PRIMARY__ \
+BOOTIF=__BOOTIF_RAW__ \
+url=__ISO_URL__ \
+autoinstall ds=nocloud;s=__SEED_URL__/ \
+cloud-config-url=/dev/null \
+cloud-init=debug \
+multipath=off \
+nvme_core.multipath=0 \
+rd.multipath=0 \
+fs-path=casper \
+root=tmpfs \
+ignore_uuid \
+console=ttyS0,115200 \
+console=tty0 \
+systemd.log_level=debug ---"
+
+echo ""
+echo "Kernel command line:"
+echo "$APPEND"
+echo ""
+
+echo "[4/4] Loading kexec..."
+/bin/kexec-amd64 -l /linux \
+  --initrd=/initrd \
+  --append="$APPEND" || {
+    echo "ERROR: kexec load failed"
+    exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
+}
+
+echo "Executing kexec..."
+/bin/kexec-amd64 -e
+
+echo "kexec returned unexpectedly"
+exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0

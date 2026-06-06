@@ -1,0 +1,141 @@
+#!/bin/sh
+
+PREREQ=""
+DESCRIPTION="Adding live session user..."
+
+prereqs()
+{
+       echo "$PREREQ"
+}
+
+case $1 in
+# get pre-requisites
+prereqs)
+       prereqs
+       exit 0
+       ;;
+esac
+
+. /scripts/casper-functions
+load_confmodule
+
+log_begin_msg "$DESCRIPTION"
+
+debconf_backup () {
+    local question backup
+    for question; do
+	backup="$question-casper-backup"
+	db_register debian-installer/dummy "$backup"
+	db_get "$question"
+	db_set "$backup" "$RET"
+	db_fget "$question" seen
+	db_fset "$backup" seen "$RET"
+    done
+}
+
+debconf_restore () {
+    local question backup
+    for question; do
+	backup="$question-casper-backup"
+	db_get "$backup"
+	db_set "$question" "$RET"
+	db_fget "$backup" seen
+	db_fset "$question" seen "$RET"
+	db_unregister "$backup"
+    done
+}
+
+debconf_backup \
+    passwd/root-password-crypted \
+    passwd/root-password passwd/root-password-again \
+    passwd/user-password-crypted \
+    passwd/user-password passwd/user-password-again \
+    passwd/user-fullname passwd/username passwd/user-uid
+
+# U6aMy0wojraho is just a blank password
+db_set passwd/root-password-crypted '*'
+db_set passwd/user-password-crypted U6aMy0wojraho
+db_set passwd/user-fullname "$USERFULLNAME"
+db_set passwd/username "$USERNAME"
+# Per LP: #2004092, systemd uses 995-999
+db_set passwd/user-uid 1000
+
+chroot /root /usr/lib/user-setup/user-setup-apply > /dev/null
+if [ ! -f /root/usr/bin/sddm ]; then
+    chroot /root passwd -d "$USERNAME"
+fi
+
+# Clear out debconf database again to avoid confusing ubiquity later.
+debconf_restore \
+    passwd/root-password-crypted \
+    passwd/root-password passwd/root-password-again \
+    passwd/user-password-crypted \
+    passwd/user-password passwd/user-password-again \
+    passwd/user-fullname passwd/username passwd/user-uid
+
+if [ -d /root/etc/sudoers.d/ ]; then
+    echo "${USERNAME}  ALL=(ALL) NOPASSWD: ALL" > /root/etc/sudoers.d/casper
+fi
+
+LTS="$(cut -d' ' -f3 /root/cdrom/.disk/info 2>/dev/null)" || LTS=
+RELEASE="$(cut -d' ' -f1-2 /root/cdrom/.disk/info 2>/dev/null | sed 's/-/ /')" || RELEASE=
+if [ "$LTS" = "LTS" ] && [ -n "$RELEASE" ]; then
+	RELEASE="$RELEASE LTS"
+fi
+for file in /usr/share/applications/ubiquity.desktop /usr/share/applications/kde/ubiquity-kdeui.desktop /usr/share/applications/lubuntu-calamares.desktop /usr/share/applications/kubuntu-calamares.desktop /usr/share/applications/ubuntu-unity-calamares.desktop /var/lib/snapd/desktop/applications/ubuntu-desktop-bootstrap_ubuntu-desktop-bootstrap.desktop; do
+    if [ -f "/root/$file" ]; then
+        sed -i "s/RELEASE/$RELEASE/" "/root$file"
+        chroot /root install -d -o $USERNAME -g $USERNAME /home/$USERNAME/Desktop
+        chroot /root install -D -o $USERNAME -g $USERNAME $file /home/$USERNAME/Desktop/$(basename "$file")
+        if [ -x "/root/usr/bin/dbus-run-session" ] && [ -x "/root/usr/bin/gio" ]; then
+            # Xubuntu
+            if [ -x "/root/usr/bin/xfdesktop" ]; then
+                checksum=$(chroot /root sha256sum "$file" | cut -d ' ' -f 1)
+                chroot /root sudo -i -u $USERNAME dbus-run-session -- gio set /home/$USERNAME/Desktop/$(basename "$file") metadata::xfce-exe-checksum "$checksum"
+            else
+                chroot /root sudo -i -u $USERNAME dbus-run-session -- gio set /home/$USERNAME/Desktop/$(basename "$file") metadata::trusted true
+            fi
+        fi
+        break
+    fi
+done
+
+# Kubuntu
+if [ -f "/root/usr/bin/plasma-desktop" ]; then
+    if [ -f "/root/usr/share/kde4/apps/khelpcenter/plugins/kubuntu/a_welcome.desktop" ]; then
+      chroot /root install -d -o $USERNAME -g $USERNAME /home/$USERNAME/Desktop
+      chroot /root install -D -o $USERNAME -g $USERNAME /usr/share/kde4/apps/khelpcenter/plugins/kubuntu/a_welcome.desktop /home/$USERNAME/Desktop/a_welcome.desktop
+    fi
+fi
+
+#Kubuntu Plasma 5, turn on folderview
+if [ -f "/root/usr/bin/plasmashell" ]; then
+    if [ -f "/root/usr/share/kubuntu-default-settings/layout.js" ]; then
+      chroot /root install -D -o $USERNAME -g $USERNAME /usr/share/kubuntu-default-settings/layout.js /usr/share/plasma/shells/org.kde.plasma.desktop/contents/layout.js
+    fi
+fi
+
+# Kubuntu Netbook
+if [ -f "/root/usr/bin/plasma-netbook" ]; then
+    config="/root/usr/share/kubuntu-netbook-default-settings/share/apps/plasma/layout-templates/org.kde.plasma-netbook.defaultSal/contents/layout.js"
+    escaped_desktop="\/usr\/share\/applications\/kde4\/ubiquity-kdeui.desktop"
+    if [ -f $config ]; then
+      sed -i "s/\/\/__UBIQUITY_PLACEHOLDER__\/\//\"$escaped_desktop\"/" $config
+    fi
+fi
+
+# Lubuntu
+if [ -f "/root/usr/bin/startlxqt" ]; then
+  config="/root/home/$USERNAME/.config/lxqt"
+  mkdir -p $config
+
+  # On first boot, lxqt-powermanagement prompts the user to configure it
+  # Disable that on the live session; LP: #2000787 is related
+  echo -e "[General]\nenableIdlenessWatcher=false\nenableLidWatcher=false\nrunCheckLevel=1" > $config/lxqt-powermanagement.conf
+
+  # Instead of calling xscreensaver, call /usr/bin/true when locking the screen
+  # This prevents an error message after suspending the machine
+  echo -e "[Screensaver]\nlock_command=/usr/bin/true" > $config/lxqt.conf
+fi
+
+log_end_msg

@@ -1,0 +1,23 @@
+#!/bin/busybox-amd64 sh
+
+# 1. Setup the environment
+# We use the absolute path to the binary since symlinks aren't installed yet
+/bin/busybox-amd64 mkdir -p /proc /sys /dev /bin
+
+# 2. Mount essential filesystems
+# devtmpfs is critical for populating /dev/ (like /dev/console)
+/bin/busybox-amd64 mount -t proc proc /proc
+/bin/busybox-amd64 mount -t sysfs sysfs /sys
+/bin/busybox-amd64 mount -t devtmpfs devtmpfs /dev
+
+# 3. Install applets
+# This creates the symlinks (ls, cat, mount, etc.) in /bin
+/bin/busybox-amd64 --install -s /bin
+
+echo "------------------------------------------"
+echo "Default Initramfs Booted (AMD64)"
+echo "------------------------------------------"
+
+# 4. Hand over control to the shell
+# 'exec' ensures the shell takes over as PID 1
+exec setsid cttyhack /bin/sh <>/dev/console 1>&0 2>&0

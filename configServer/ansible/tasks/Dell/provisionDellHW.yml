@@ -1,0 +1,134 @@
+---
+- name: Eject existing Virtual Media (Manual URI)
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/CD/Actions/VirtualMedia.EjectMedia"
+    method: POST
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: yes
+    status_code: [200, 204, 400, 403, 500] # Ignore if already empty
+    validate_certs: no
+    body_format: json
+    body: {}
+
+- name: Insert New ISO (Manual URI)
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/CD/Actions/VirtualMedia.InsertMedia"
+    method: POST
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: yes
+    status_code: [200, 204]
+    validate_certs: no
+    body_format: json
+    body:
+      Image: "{{ generated_iso_url }}"
+      Inserted: true
+      WriteProtected: true
+
+- name: Set One-Time Boot to Virtual CD
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Systems/System.Embedded.1"
+    method: PATCH
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: yes
+    status_code: [200, 204]
+    validate_certs: no
+    body_format: json
+    body:
+      Boot:
+        BootSourceOverrideEnabled: "Once"
+        BootSourceOverrideTarget: "Cd"
+
+- name: Get Current Power State
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Systems/System.Embedded.1"
+    method: GET
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+  register: system_state
+
+- name: Power On or Reboot
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Systems/System.Embedded.1/Actions/ComputerSystem.Reset"
+    method: POST
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: yes
+    status_code: [200, 204]
+    validate_certs: no
+    body_format: json
+    body:
+      # Use ForceRestart to ensure the BIOS cycle triggers the One-Time Boot immediately
+      ResetType: "{{ 'On' if system_state.json.PowerState == 'Off' else 'ForceRestart' }}"
+
+- name: Buffer - Wait for BMC to initiate Boot
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: Step 2.5 - Clear Old SSH Keys
+  ansible.builtin.command: "ssh-keygen -f '~/.ssh/known_hosts' -R '{{ ansible_host }}'"
+  delegate_to: localhost
+  failed_when: false
+
+- name: Step 3 - Wait for Installer to respond to Ping
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: 22 # port 22 might work
+    state: started
+    delay: 10
+    timeout: 600
+    msg: "Installer network not reachable"
+  delegate_to: localhost
+
+# - name: Buffer - Wait for initial installation progress
+#   ansible.builtin.pause:
+#     seconds: 300
+
+# - name: Step 4 - Wait for Installer Reboot (Watching for Ping to drop)
+#   ansible.builtin.shell: |
+#     ping -c 1 -W 1 {{ ansible_host }} > /dev/null
+#   delegate_to: localhost
+#   register: ping_check
+#   until: ping_check.rc != 0
+#   retries: 100
+#   delay: 15
+#   failed_when: false
+
+# - name: Step 5 - Wait for Real OS SSH to return
+#   ansible.builtin.wait_for:
+#     host: "{{ ansible_host }}"
+#     port: 22
+#     state: started
+#     timeout: 1200 
+#   delegate_to: localhost
+
+
+# - name: Step 6 - Final Identity Check
+#   ansible.builtin.shell: >
+#     sshpass -p '{{ os_password }}' 
+#     ssh -o StrictHostKeyChecking=no 
+#     -o UserKnownHostsFile=/dev/null
+#     -o ConnectTimeout=5
+#     {{ os_username }}@{{ ansible_host }} 'whoami'
+#   delegate_to: localhost
+#   register: final_login
+#   until: final_login.rc == 0
+#   retries: 60
+#   delay: 30
+#   failed_when: false
+
+# - name: Eject existing Virtual Media (Manual URI)
+#   ansible.builtin.uri:
+#     url: "https://{{ bmc_address }}/redfish/v1/Managers/iDRAC.Embedded.1/VirtualMedia/CD/Actions/VirtualMedia.EjectMedia"
+#     method: POST
+#     user: "{{ bmc_user }}"
+#     password: "{{ bmc_password }}"
+#     force_basic_auth: yes
+#     status_code: [200, 204, 400, 403] # Ignore if already empty
+#     validate_certs: no
+#     body_format: json
+#     body: {}

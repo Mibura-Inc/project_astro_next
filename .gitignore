@@ -1,0 +1,87 @@
+# Logs & Runtime Dumps
+*.log
+*.bak
+*.orig
+*.old
+*~
+
+# Python Virtual Environments & Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.venv/
+venv/
+.env/
+ENV/
+.pytest_cache/
+.coverage
+
+# Generated ISOs
+*.iso
+*.img
+*.qcow2
+*.vmdk
+*.raw
+*.ova
+*.gz
+
+# Temporary build files
+tmp/
+temp/
+build/
+dist/
+oldFiles/
+BinCompilers/
+CompiledBinaries/
+out/
+
+# Cloud-init generated files
+user-data
+meta-data
+vendor-data
+
+# Generated scripts
+installer-launch.sh
+
+# Environment / secrets
+.env
+*.env
+secrets.yml
+vault.yml
+
+# SSH keys
+id_rsa
+id_rsa.pub
+*.pem
+*.key
+*.pub
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+
+# Coverage/testing
+.coverage
+pytest_cache/
+
+
+# Runtime jobs
+**/jobs/
+**/test/
+**/artifacts/
+**/inventory/
+
+.terraform/
+*.tfstate
+*.tfstate.backup
+.ansible_cache/initrd
+vmlinuz
+initrd

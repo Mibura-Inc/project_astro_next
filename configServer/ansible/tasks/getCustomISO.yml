@@ -1,0 +1,67 @@
+---
+# - name: 1. Get Authentication Token
+#   ansible.builtin.uri:
+#     url: "{{ api_base_url }}/auth/token"
+#     method: POST
+#     body_format: json
+#     validate_certs: "{{ validate_certs | default(false) }}"
+#     body:
+#       username: "{{ api_user }}"
+#       password: "{{ api_pass }}"
+#   register: authResponse
+
+# - name: 2. Request Custom ISO
+#   ansible.builtin.uri:
+#     url: "{{ api_base_url }}/api/v1/servers/provision/custom-iso"
+#     method: POST
+#     body_format: json
+#     validate_certs: "{{ validate_certs | default(false) }}"
+#     headers:
+#       Authorization: "Bearer {{ authResponse.json.body.access_token }}"
+#     body:
+#       os_type: "{{ os_type | default('ubuntu') }}"
+#       os_version: "{{ os_version | default('24.04.3') }}"
+#       arch: "{{ os_arch | default('amd64') }}"
+#       variant: "{{ os_variant | default('ipxe-uefi') }}"
+#       hostname: "{{ os_hostname }}"
+#       username: "{{ os_username }}"
+#       password: "{{ os_password }}"
+#       ipv4_address: "{{ os_ipv4_address }}"
+#       ipv4_gateway: "{{ os_ipv4_gateway }}"
+#       ipv4_netmask: "{{ os_ipv4_netmask }}"
+#       dns_servers: "{{ os_dns_servers | default('8.8.8.8') }}"
+#   register: isoResponse
+
+- name: 2. Request Custom ISO NEW
+  ansible.builtin.uri:
+    url: "{{ api_base_url }}/api/v1/servers/provision/custom-iso"
+    method: POST
+    body_format: json
+    validate_certs: "{{ validate_certs | default(false) }}"
+    # headers:
+    #   Authorization: "Bearer {{ authResponse.json.body.access_token }}"
+    body:
+      os_type: "{{ os_type | default('ubuntu') }}"
+      os_version: "{{ os_version | default('24.04.3') }}"
+      arch: "{{ os_arch | default('amd64') }}"
+      variant: "{{ os_variant | default('ipxe-uefi') }}"
+      hostname: "{{ os_hostname }}"
+      username: "{{ os_username }}"
+      password: "{{ os_password }}"
+      ipv4_address: "{{ os_ipv4_address }}"
+      ipv4_gateway: "{{ os_ipv4_gateway }}"
+      ipv4_netmask: "{{ os_ipv4_netmask }}"
+      ipv6_address: "{{ os_ipv6_address }}"
+      ipv6_gateway: "{{ os_ipv6_gateway }}"
+      ipv6_cidr: "{{ os_ipv6_cidr }}"
+      dns_servers: "{{ os_dns_servers | default('8.8.8.8') }}"
+      raid: "{{os_raid | default(false)}}"
+  register: isoResponse
+
+- name: 3. Set ISO URL Fact
+  ansible.builtin.set_fact:
+    generated_iso_url: "{{ isoResponse.json.body.iso_url }}"
+
+- name: 4. Log URL
+  ansible.builtin.debug:
+    msg: "ISO successfully staged at: {{ generated_iso_url }}"

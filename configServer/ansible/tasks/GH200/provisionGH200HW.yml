@@ -1,0 +1,188 @@
+---
+- name: 1. Eject all Virtual Media slots (Clean Slate)
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Managers/1/VirtualMedia/{{ item }}/Actions/VirtualMedia.EjectMedia"
+    method: POST
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: {}
+    validate_certs: false
+    status_code: [200, 204, 400, 404]
+  vars:
+    vmedia_slots:
+      - "VirtualMedia1"
+      - "VirtualMedia2"
+      - "VirtualMedia3"
+  loop: "{{ vmedia_slots | default(['VirtualMedia1']) }}"
+
+- name: 2. Insert Generated ISO
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Managers/1/VirtualMedia/VirtualMedia1/Actions/VirtualMedia.InsertMedia"
+    method: POST
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      Image: "{{ generated_iso_url }}"
+    validate_certs: false
+    status_code: [200, 202, 204]
+
+- name: 3. Set UEFI One-Time Boot to CD
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Systems/1"
+    method: PATCH
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      Boot:
+        BootSourceOverrideEnabled: "Once"
+        BootSourceOverrideMode: "UEFI"
+        BootSourceOverrideTarget: "Cd"
+    status_code: [200, 204]
+
+- name: 4. Check Power State
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Systems/1"
+    method: GET
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: true
+    validate_certs: false
+  register: systemStatus
+
+- name: 5. Force Restart / Power On
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Systems/1/Actions/ComputerSystem.Reset"
+    method: POST
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    body:
+      ResetType: "{{ 'On' if systemStatus.json.PowerState == 'Off' else 'PowerCycle' }}"
+    status_code: [200, 204]
+
+- name: Buffer - Wait for BMC to initiate Boot
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: Step 2.5 - Clear Old SSH Keys
+  ansible.builtin.command: "ssh-keygen -f '~/.ssh/known_hosts' -R '{{ ansible_host }}'"
+  delegate_to: localhost
+  failed_when: false
+
+# - name: Step 3 - Wait for ipxe to reach network
+#   ansible.builtin.shell: "ping -c 1 -W 2 {{ ansible_host }}"
+#   delegate_to: localhost
+#   register: installer_ping
+#   until: installer_ping.rc == 0
+#   retries: 100
+#   delay: 10
+#   # We use Ping here so we don't 'touch' the installer's SSH and crash it.
+
+# - name: Buffer - Wait for initial download and installation
+#   ansible.builtin.pause:
+#     seconds: 450
+
+# - name: Step 3 - Checking to see if the install is still going
+#   ansible.builtin.shell: "ping -c 1 -W 2 {{ ansible_host }}"
+#   delegate_to: localhost
+#   register: installer_ping
+#   until: installer_ping.rc == 0
+#   retries: 10
+#   delay: 10
+#   # We use Ping here so we don't 'touch' the installer's SSH and crash it.
+
+# - name: Step 4 - Wait for Installer Reboot (30 Consecutive Ping Failures - 30s downtime)
+#   ansible.builtin.shell: |
+#     success_count=0
+#     for i in {1..30}; do
+#       if ping -c 1 -W 1 {{ ansible_host }} > /dev/null; then
+#         success_count=$((success_count+1))
+#       fi
+#       sleep 1
+#     done
+#     echo "Successes: $success_count"
+#     exit $success_count
+#   delegate_to: localhost
+#   register: ping_down_check
+#   # We loop UNTIL success_count is 0 (exit code 0)
+#   until: ping_down_check.rc == 0
+#   retries: 120 # 4 * 30min
+#   delay: 30
+#   failed_when: false
+
+# - name: Eject All Virtual Media
+#   ansible.builtin.uri:
+#     url: "https://{{ bmc_address }}/redfish/v1/Managers/1/VirtualMedia/{{ item }}/Actions/VirtualMedia.EjectMedia"
+#     method: POST
+#     user: "{{ bmc_user }}"
+#     password: "{{ bmc_password }}"
+#     force_basic_auth: true
+#     body_format: json
+#     body: {}
+#     validate_certs: false
+#     status_code: [200, 204, 400, 404]
+#   # Crucial: Run this from your management machine, not the GH200 OS
+#   delegate_to: localhost
+#   loop: "{{ vmedia_slots | default(['VirtualMedia1', 'VirtualMedia2', 'VirtualMedia3']) }}"
+
+# - name: Buffer - Wait for system to stabilize
+#   ansible.builtin.pause:
+#     seconds: 300
+
+# - name: 4. Check Power State
+#   ansible.builtin.uri:
+#     url: "https://{{ bmc_address }}/redfish/v1/Systems/1"
+#     method: GET
+#     user: "{{ bmc_user }}"
+#     password: "{{ bmc_password }}"
+#     force_basic_auth: true
+#     validate_certs: false
+#   register: systemStatus
+
+# - name: 5. Force Restart / Power On - Required after install - the boot order is scrambled
+#   ansible.builtin.uri:
+#     url: "https://{{ bmc_address }}/redfish/v1/Systems/1/Actions/ComputerSystem.Reset"
+#     method: POST
+#     user: "{{ bmc_user }}"
+#     password: "{{ bmc_password }}"
+#     force_basic_auth: true
+#     validate_certs: false
+#     body_format: json
+#     body:
+#       ResetType: "{{ 'On' if systemStatus.json.PowerState == 'Off' else 'PowerCycle' }}"
+#     status_code: [200, 204]
+
+# - name: Step 5 - Wait for Real OS to Boot (Watching for SSH to return)
+#   ansible.builtin.wait_for:
+#     host: "{{ ansible_host }}"
+#     port: 22
+#     state: started
+#     timeout: 1200 
+#   delegate_to: localhost
+
+# - name: Step 6 - Final Identity Check (Login Verification)
+#   ansible.builtin.shell: >
+#     sshpass -p '{{ os_password }}' 
+#     ssh -o StrictHostKeyChecking=no 
+#     -o UserKnownHostsFile=/dev/null
+#     -o ConnectTimeout=5
+#     {{ os_username }}@{{ ansible_host }} 'whoami'
+#   delegate_to: localhost
+#   register: final_login
+#   until: final_login.rc == 0
+#   retries: 120
+#   delay: 30
+#   failed_when: false
+
+# - name: Step 7 - Final Settlement Delay
+#   ansible.builtin.pause:
+#     seconds: 30

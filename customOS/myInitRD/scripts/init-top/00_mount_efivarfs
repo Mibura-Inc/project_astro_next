@@ -1,0 +1,19 @@
+#!/bin/sh
+
+PREREQ=""
+prereqs()
+{
+ echo "$PREREQ"
+}
+case $1 in
+# get pre-requisites
+prereqs)
+ prereqs
+ exit 0
+ ;;
+esac
+
+# shellcheck disable=SC2013
+if [ -d /sys/firmware/efi/efivars ]; then
+	mount -t efivarfs -o rw,nosuid,nodev,noexec,relatime efivarfs /sys/firmware/efi/efivars
+fi

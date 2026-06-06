@@ -1,0 +1,313 @@
+---
+
+# --- KERNEL SETUP ---
+
+# - name: 1. Install NVIDIA 64k Kernel
+#   ansible.builtin.apt:
+#     name: linux-nvidia-64k
+#     state: present
+#     update_cache: yes
+#   register: kernel_install
+
+# - name: 2. Reboot for Kernel 64k
+#   ansible.builtin.reboot:
+#     msg: "Rebooting to activate NVIDIA 64k kernel"
+#     connect_timeout: 5
+#     reboot_timeout: 600
+#     test_command: uname -a
+#   when: kernel_install.changed
+
+- name: 1. Get Kernel Release
+  ansible.builtin.command: uname -r
+  register: kernel_out
+  changed_when: false
+
+- name: 2. Verify Kernel Page Size
+  ansible.builtin.command: getconf PAGESIZE
+  register: pagesize_out
+  changed_when: false
+
+- name: Log Kernel & Pagesize
+  ansible.builtin.debug:
+    msg: 
+      - "Kernel: {{ kernel_out.stdout }}"
+      - "Page Size: {{ pagesize_out.stdout }} bytes"
+
+# # --- DOCA & BUILD DEPENDENCIES ---
+
+- name: 1. Install Build Dependencies and Headers
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - libxml2-utils
+      - perl
+      - python3-setuptools
+      - pkg-config
+      - python3-venv
+      - "linux-headers-{{ kernel_out.stdout }}" # Matches the 64k kernel version
+    state: present
+    update_cache: yes
+
+- name: 2. Download DOCA Host Repo Package
+  ansible.builtin.get_url:
+    url: "https://www.mellanox.com/downloads/DOCA/DOCA_v3.3.0/host/doca-host_3.3.0-088000-26.01-ubuntu2404_arm64.deb"
+    dest: "/tmp/doca-repo.deb"
+    mode: '0644'
+
+- name: 3. Install DOCA Repo Configuration
+  ansible.builtin.apt:
+    deb: "/tmp/doca-repo.deb"
+
+- name: 4. Install DOCA-ALL
+  ansible.builtin.apt:
+    name: doca-all
+    state: present
+    update_cache: yes
+  register: doca_install
+
+- name: 6. Reboot to Load DOCA
+  ansible.builtin.reboot:
+    msg: "Rebooting to initialize NVIDIA Open Drivers on {{ ansible_facts['hostname'] }}"
+    reboot_timeout: 600
+  when: doca_install.changed
+
+- name: Configure BlueField-3 for NIC Mode and ATS
+  block:
+    - name: Check current mlxconfig settings
+      ansible.builtin.shell: "mlxconfig -d {{ pci_addr | default('mlx5_0') }} q"
+      register: mlx_q
+      changed_when: false
+
+    - name: Apply BlueField-3 Hardware Configurations
+      ansible.builtin.shell: |
+        mlxconfig -y -d {{ item.device }} set \
+        LINK_TYPE_P1={{ item.link_type }} \
+        INTERNAL_CPU_OFFLOAD_ENGINE={{ item.cpu_mode }} \
+        ATS_ENABLED={{ item.ats }}
+      loop:
+        - { device: "mlx5_0", link_type: 1, cpu_mode: 1, ats: 1 }
+      # Only run if any of the target values are not currently set
+      when: >
+        'LINK_TYPE_P1(1)' not in mlx_q.stdout or
+        'INTERNAL_CPU_OFFLOAD_ENGINE(1)' not in mlx_q.stdout or
+        'ATS_ENABLED(1)' not in mlx_q.stdout
+      register: mlx_config_update
+
+- name: 6. Reboot to Load Mellanox config
+  ansible.builtin.reboot:
+    msg: "Rebooting to initialize NVIDIA Open Drivers on {{ ansible_facts['hostname'] }}"
+    reboot_timeout: 600
+  when: mlx_config_update.changed
+
+- name: Audit BlueField-3 and GH200 RDMA Stack
+  block:
+    - name: Capture mlxconfig Status
+      ansible.builtin.shell: "mlxconfig -d mlx5_0 q"
+      register: mlx_audit
+      changed_when: false
+
+    - name: Capture InfiniBand Link Status
+      ansible.builtin.shell: "ibstat mlx5_0"
+      register: ibstat_audit
+      changed_when: false
+
+    - name: Check loaded Kernel Modules
+      ansible.builtin.shell: "lsmod"
+      register: lsmod_audit
+      changed_when: false
+
+    - name: Display BF3 High-Level Configuration
+      ansible.builtin.debug:
+        msg: 
+          - "--- BlueField-3 Hardware Audit ---"
+          - "Device: mlx5_0"
+          - "ATS Active: {{ 'True' if mlx_audit.stdout is search('ATS_ENABLED.*True\\(1\\)') else 'False' }}"
+          - "Mode: {{ 'NIC Mode (Host)' if mlx_audit.stdout is search('INTERNAL_CPU_OFFLOAD_ENGINE.*1') else 'DPU Mode (ARM)' }}"
+          - "Link Type: {{ 'InfiniBand' if mlx_audit.stdout is search('LINK_TYPE_P1.*IB\\(1\\)') else 'Ethernet' }}"
+          - "Link State: {{ 'UP' if ibstat_audit.stdout is search('State: Active') else 'DOWN' }}"
+          - "Link Rate: {{ '400G (NDR)' if ibstat_audit.stdout is search('Rate: 400') else 'Sub-optimal' }}"
+          - "----------------------------------"
+
+    - name: Guardrail - Validate ATS for GH200
+      ansible.builtin.fail:
+        msg: "CRITICAL: ATS_ENABLED is not reporting True(1). Check if a cold boot is required."
+      when: not (mlx_audit.stdout is search('ATS_ENABLED.*True\(1\)'))
+
+    - name: Check for Pending Firmware Reset
+      ansible.builtin.shell: "mlxfwreset -d mlx5_0 q"
+      register: reset_check
+      changed_when: false
+
+    - name: Guardrail - Ensure No Pending Resets
+      ansible.builtin.fail:
+        msg: "CRITICAL: Firmware reset is required to apply changes. Run mlxfwreset -d mlx5_0 -y reset"
+      when: "'Required' in reset_check.stdout"
+
+- name: Optimize Kernel for GH200 RDMA
+  ansible.posix.sysctl:
+    name: kernel.numa_balancing
+    value: '0'
+    state: present
+    reload: yes
+
+# --- nvidia-open driver ---
+
+- name: 1. Set Dynamic Repository Facts (Future-Proofed)
+  ansible.builtin.set_fact:
+    # Uses the recommended ansible_facts dictionary to avoid deprecation warnings
+    nvidia_repo_id: "ubuntu{{ ansible_facts['distribution_version'] | replace('.', '') }}"
+    nvidia_arch: "{{ 'sbsa' if ansible_facts['architecture'] == 'aarch64' else 'x86_64' }}"
+
+- name: 2. Download NVIDIA GPG Key
+  ansible.builtin.get_url:
+    url: "https://developer.download.nvidia.com/compute/cuda/repos/{{ nvidia_repo_id }}/{{ nvidia_arch }}/cuda-archive-keyring.gpg"
+    dest: /usr/share/keyrings/cuda-archive-keyring.gpg
+    mode: '0644'
+
+- name: 3. Add NVIDIA CUDA Repository Dynamically
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] https://developer.download.nvidia.com/compute/cuda/repos/{{ nvidia_repo_id }}/{{ nvidia_arch }}/ /"
+    state: present
+    filename: nvidia-cuda
+
+- name: 4. Update Apt Cache
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: 5. Install Latest NVIDIA Open Driver
+  ansible.builtin.apt:
+    name: nvidia-open
+    state: present
+  register: driver_install
+
+- name: 6. Reboot to Load NVIDIA Open Modules
+  ansible.builtin.reboot:
+    msg: "Rebooting to initialize NVIDIA Open Drivers on {{ ansible_facts['hostname'] }}"
+    reboot_timeout: 600
+  when: driver_install.changed
+
+- name: 7. Run Final NVIDIA Vibe Check
+  ansible.builtin.command: nvidia-smi -L  # -L is a "List" format, much easier to parse
+  register: smi_final
+
+- name: 8. Report Final Status
+  ansible.builtin.debug:
+    msg: 
+      - "------------------------------------------------"
+      - "GH200 PROVISIONING COMPLETE"
+      - "GPU Detected: {{ smi_final.stdout }}"
+      - "------------------------------------------------"
+
+- name: 9. Verify GH200 NVLink-C2C Topology
+  ansible.builtin.command: nvidia-smi topo -m
+  register: topo_out
+
+- name: 10. Check CPU-GPU Affinity (NUMA)
+  ansible.builtin.command: numactl -H
+  register: numa_out
+  ignore_errors: yes
+
+- name: 11. Final Architecture Report
+  ansible.builtin.debug:
+    msg: 
+      - "--- Topology Matrix ---"
+      - "{{ topo_out.stdout_lines }}"
+      - "--- NUMA Nodes (Look for GPU memory as a separate node) ---"
+      - "{{ numa_out.stdout_lines | default('numactl not installed') }}"
+
+# --- GPUDirect-RDMA ---
+
+- name: Enable nvidia-peermem for GPUDirect RDMA
+  community.general.modprobe:
+    name: nvidia-peermem
+    state: present
+    persistent: present
+
+- name: Install XPMEM for GH200 Coherency
+  ansible.builtin.apt:
+    name:
+      - xpmem
+      - libxpmem-dev
+      - xpmem-dkms  # This builds the kernel module against your 64k kernel
+    state: present
+
+- name: Enable xpmem for GPUDirect RDMA
+  community.general.modprobe:
+    name: xpmem
+    state: present
+    persistent: present
+  register: modprobe_modification
+
+- name: Set persistence mode to enabled for all GPUs
+  ansible.builtin.shell: nvidia-smi -pm 1
+  changed_when: " 'Enabled' in result.stdout "
+  register: result
+
+- name: Ensure nvidia-persistenced service is started and enabled
+  ansible.builtin.systemd:
+    name: nvidia-persistenced
+    state: started
+    enabled: yes
+
+- name: 6. Reboot for verification
+  ansible.builtin.reboot:
+    msg: "Rebooting to initialize NVIDIA Open Drivers on {{ ansible_facts['hostname'] }}"
+    reboot_timeout: 600
+  when: modprobe_modification.changed
+
+- name: Verify modules are loaded
+  shell: lsmod | grep {{ item }}
+  loop:
+    - nvidia_peermem
+    - xpmem
+  changed_when: false
+  register: module_check
+  failed_when: module_check.rc != 0
+
+- name: Confirm XPMEM device node exists
+  ansible.builtin.stat:
+    path: /dev/xpmem
+  register: xpmem_dev
+  failed_when: not xpmem_dev.stat.exists
+
+# --- Final Verification of RDMA ---
+
+- name: Verify nvidia-peermem is functionally bound
+  ansible.builtin.shell: |
+    grep "nvidia_peermem" /proc/modules
+  register: peermem_status
+  failed_when: peermem_status.rc != 0
+
+- name: Install RDMA performance testing tools
+  ansible.builtin.apt:
+    name: perftest
+    state: present
+
+- name: Final Functional Check - GPUDirect RDMA Loopback
+  ansible.builtin.shell: |
+    # Running a short loopback test (server and client on same node)
+    ib_write_bw -d mlx5_0 --use_cuda=0 --duration=1 & 
+    sleep 2; 
+    ib_write_bw -d mlx5_0 --use_cuda=0 --duration=1 localhost
+  register: rdma_functional_test
+  failed_when: 
+    - "'failed' in rdma_functional_test.stdout.lower()"
+    - "rdma_functional_test.rc != 0"
+  changed_when: false
+
+- name: Extract GPUDirect RDMA Bandwidth Result
+  set_fact:
+    # Filter the line, split it into a list of words/numbers
+    # [65536, 5000, 9520.12, 9450.45, 15.12]
+    rdma_row_data: "{{ rdma_functional_test.stdout_lines | select('search', '65536') | list | last | split }}"
+
+- name: 🚀 GPUDirect RDMA Performance Summary
+  debug:
+    msg: 
+      - "----------------------------------------------------"
+      - "Device: mlx5_0 | Mode: GH200 NODE (Coherent)"
+      - "Status: GPUDirect RDMA Verified"
+      # Index [3] is typically the 'BW average[MB/sec]' column
+      - "Result: {{ rdma_row_data[3] }} MB/sec"
+      - "----------------------------------------------------"
+

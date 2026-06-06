@@ -1,0 +1,24 @@
+# Soft dependencies extracted from modules themselves.
+softdep cifs gcm
+softdep cifs ccm
+softdep cifs aead2
+softdep cifs sha512
+softdep cifs sha256
+softdep cifs cmac
+softdep cifs aes
+softdep cifs nls
+softdep cifs md5
+softdep cifs hmac
+softdep cifs ecb
+softdep btrfs pre: blake2b-256
+softdep btrfs pre: sha256
+softdep btrfs pre: xxhash64
+softdep btrfs pre: crc32c
+softdep lrw pre: ecb
+softdep intel_lpss pre: platform:idma64
+softdep csiostor pre: cxgb4
+softdep spi_pxa2xx_platform pre: dw_dmac
+softdep genet pre: mdio-bcm-unimac
+softdep r8169 pre: realtek
+softdep ufshcd_core pre: governor_simpleondemand
+softdep hid_appletb_kbd pre: hid_appletb_bl

@@ -11,7 +11,7 @@ Astro use a staged execution pattern to keep the initial boot media lightweight 
 WIP
 
 ### Component Breakdown
-1. Config Server & API (`configServer/server.py`): 
+1. Config server & API (`configServer/server.py`): 
    A multi-threaded Python server that acts as the control plane. It tracks provisioning state machines, serves static files, maps Ubuntu versions to netboot resources, and dynamically generates `user-data` cloud-init autoinstall profiles (selecting RAID configs automatically if multiple disks are present) based on real-time hardware reports.
 2. iPXE Builder (`ipxe-builder/`):
    Contains iPXE source code templates. Consolidates the boot media compilation process (`pipeline.sh`, `compose.py`) which builds hydrated UEFI-compliant ISO boot images.
@@ -146,7 +146,9 @@ Launches Ansible playbook `playbookDell.yml` in the background to configure BMC 
 ## 5. Advanced Build Operations
 
 ### Recompiling the Custom OS initramfs
-If you modify the Stage 1 bootstrap scripts under `customOS/myInitRD/` (such as `init`), rebuild and compress the initramfs using the compiled toolchain inside the Docker container:
+This compilation step must be run the first time you set up the project (to generate the initial RAMDISK image) as well as any time you modify the stage 1 bootstrap scripts under `customOS/myInitRD/` (such as `init`). 
+
+Rebuild and compress the initramfs using the compiled toolchain inside the Docker container:
 ```bash
 # Inside the Docker container (/work):
 chmod -R 777 /work/customOS/myInitRD/
@@ -155,7 +157,7 @@ mkdir -p /work/configServer/http/customOS/
 find . -print0 | cpio --null -ov --format=newc | gzip -9 > /work/configServer/http/customOS/initramfs.cpio.gz
 ```
 
-### Compiling static `kexec-tools` (Architectural Guide)
+### Compiling static `kexec-tools`
 To compile a static, dependency-free `kexec` binary capable of running on target machines:
 
 ```bash

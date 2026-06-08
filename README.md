@@ -35,24 +35,41 @@ The configuration server utilizes the HTTP `Host` header (via `get_server_host()
 
 The project includes all compilers, boot creation tools, and Ansible playbooks in a unified Docker environment.
 
-### Step 1: Build & Launch the Docker Container
+### Step 1: Build and launch the Docker container
 Run the following commands in the project root to spin up the build environment:
 ```bash
 # Build the Docker image containing necessary build tools and packages
 sudo docker compose build
 
+# Clear host OS caches to maximize available memory (might not be necessary now)
+sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
+
 # Launch the container, exposing the API port (8000) and opening interactive terminal
 sudo docker compose run --rm --service-ports ipxe-builder
 ```
 
-### Step 2: Start the Config Server (Inside Docker Container)
-Once inside the container shell, run the HTTP control plane server:
+### Step 2: Recompiling the Custom OS initramfs
+
+This compilation step must be run the first time you set up the project (to generate the initial RAMDISK image) as well as any time you modify the stage 1 bootstrap scripts under `customOS/myInitRD/` (such as `init`). 
+
+Rebuild and compress the initramfs using the compiled toolchain inside the Docker container:
+```bash
+# Inside the Docker container (/work):
+chmod -R 777 /work/customOS/myInitRD/
+cd /work/customOS/myInitRD/
+mkdir -p /work/configServer/http/customOS/
+find . -print0 | cpio --null -ov --format=newc | gzip -9 > /work/configServer/http/customOS/initramfs.cpio.gz
+cd /work
+```
+
+### Step 3: Start the config server (inside Docker container)
+Again, inside the container shell, run the HTTP control plane server:
 ```bash
 python3 configServer/server.py
 ```
 *The server will start listening on port `8000`.*
 
-### Step 3 (Optional): Configure Nginx on the Host
+### Step 4 (Optional): Configure Nginx on the host
 If you want to front the server on standard HTTP port `80`, configure Nginx on the host machine as a reverse proxy:
 ```nginx
 # Nginx Configuration File (e.g. /etc/nginx/sites-enabled/ipxe-builder)
@@ -89,7 +106,9 @@ Initiates the compilation of a dynamic, UEFI-bootable ISO tailored to the target
       "ipv4_address": "10.1.10.143",
       "ipv4_gateway": "10.1.10.1",
       "ipv4_netmask": "255.255.255.0",
-      "dns_servers": "1.1.1.1,8.8.8.8"
+      "dns_servers": "1.1.1.1,8.8.8.8", 
+      "disable_updates": true, 
+      "raid": false
   }
   ```
 * Response:
@@ -125,7 +144,7 @@ Called by the micro-initramfs of the booted target node to report hardware attri
 ### 3. Server file automation & media retrieval
 Serves the dynamic cloud-init templates, ISO images, and launcher scripts.
 * URL: `GET /automation/<job_id>/<file>`
-* Features: Supports HTTP 206 Range (Partial Content) headers. This is critical for streaming chunks of larger installation files/ISOs without memory issues on target bare-metal environments.
+* Features: Supports HTTP 206 Range (Partial Content) headers. This is important for streaming chunks of larger installation files/ISOs without memory issues on target bare-metal environments.
 
 ### 4. Telemetry logging
 Subiquity forwards installation stage logs back to the server.
@@ -143,19 +162,7 @@ Launches Ansible playbook `playbookDell.yml` in the background to configure BMC 
 
 ---
 
-## 5. Advanced Build Operations
-
-### Recompiling the Custom OS initramfs
-This compilation step must be run the first time you set up the project (to generate the initial RAMDISK image) as well as any time you modify the stage 1 bootstrap scripts under `customOS/myInitRD/` (such as `init`). 
-
-Rebuild and compress the initramfs using the compiled toolchain inside the Docker container:
-```bash
-# Inside the Docker container (/work):
-chmod -R 777 /work/customOS/myInitRD/
-cd /work/customOS/myInitRD/
-mkdir -p /work/configServer/http/customOS/
-find . -print0 | cpio --null -ov --format=newc | gzip -9 > /work/configServer/http/customOS/initramfs.cpio.gz
-```
+## 6. Advanced Build Operations
 
 ### Compiling static `kexec-tools`
 To compile a static, dependency-free `kexec` binary capable of running on target machines:

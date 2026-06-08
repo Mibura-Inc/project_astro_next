@@ -125,6 +125,44 @@ Initiates the compilation of a dynamic, UEFI-bootable ISO tailored to the target
   }
   ```
 
+### 2. Ansible Provision Staging (iDRAC BMC)
+Launches Ansible playbook `playbookDell.yml` in the background to configure BMC settings.
+
+* URL: `POST /api/v1/provision`
+* Request Body:
+  ```json
+  {
+      "bmc_address": "10.0.10.141",
+      "bmc_username": "root",
+      "bmc_password": "password",
+      "os_type": "ubuntu",
+      "os_version": "24.04.4",
+      "arch": "amd64",
+      "variant": "ipxe-uefi",
+      "hostname": "test",
+      "username": "default",
+      "password": "default",
+      "ipv4_address": "10.1.10.142",
+      "ipv4_gateway": "10.1.10.1",
+      "ipv4_netmask": "255.255.255.224",
+      "ipv6_address": "1234:1234:1234:1234::1234",
+      "ipv6_gateway": "fe80::1234:1234:1234:1234",
+      "ipv6_cidr": "64",
+      "dns_servers": "8.8.8.8,8.8.4.4,1.1.1.1,2001:4860:4860::8888",
+      "raid": false
+  }
+  ```
+* Response:
+  ```json
+  {
+      "success": true,
+      "body": {
+          "job_id": "test"
+      }
+  }
+  ```
+  *(Note: You can track the progress of the background Ansible provisioning staging using the **Check lifecycle status** job query)*
+
 ### 2. Phone Home
 Called by the micro-initramfs of the booted target node to report hardware attributes.
 * URL: `POST /api/v1/servers/phone-home`
@@ -155,10 +193,22 @@ Subiquity forwards installation stage logs back to the server.
 Retrieve the exact step of the bare-metal node installation.
 * URL: `GET /status?job_id=<job_id>` or `GET /api/v1/jobs/status?job_id=<job_id>`
 * Response Stages: `BOOTING` $\rightarrow$ `STAGING` $\rightarrow$ `PHONED_HOME` $\rightarrow$ `INSTALLING` $\rightarrow$ `COMPLETED` / `INSTALL_FAILED`.
-
-### 6. Ansible Provision Staging (iDRAC BMC)
-Launches Ansible playbook `playbookDell.yml` in the background to configure BMC settings.
-* URL: `POST /api/v1/provision`
+* Sample Call:
+  ```bash
+  curl http://<server-ip>:8000/status?job_id=test-node-01
+  ```
+* Response Example:
+  ```json
+  {
+      "job_id": "test-node-01",
+      "lifecycle_stage": "STAGING",
+      "stage_description": "Ansible playbook running out-of-band initialization calls via BMC/iDRAC.",
+      "ansible_staging": {
+          "status": "running",
+          "rc": null
+      }
+  }
+  ```
 
 ---
 

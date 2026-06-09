@@ -155,6 +155,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
                     if os.path.exists(file_path):
                         self.send_response(200)
+
+                        self.send_header("Server", "Python/3.x ThreadedHTTPServer")
+                        self.send_header("Date", self.date_time_string())
+
                         if filename.endswith(".sh"):
                             self.send_header("Content-Type", "text/x-shellscript")
                         elif filename.endswith(".iso"):
@@ -172,7 +176,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
         else:
             self.send_response(200)
-            self.send_header("Content-type", "application/octet-stream")
+            self.send_header("Content-Type", "application/octet-stream")
             self.end_headers()
 
     def do_GET(self):

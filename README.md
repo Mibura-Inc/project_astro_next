@@ -41,7 +41,7 @@ Run the following commands in the project root to spin up the build environment:
 # Build the Docker image containing necessary build tools and packages
 sudo docker compose build
 
-# Clear host OS caches to maximize available memory (might not be necessary now)
+# Clear host OS caches to maximize available memory (might not be necessary after recent changes)
 sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
 
 # Launch the container, exposing the API port (8000) and opening interactive terminal
@@ -69,24 +69,81 @@ python3 configServer/server.py
 ```
 *The server will start listening on port `8000`.*
 
-### Step 4 (Optional): Configure Nginx on the host
-If you want to front the server on standard HTTP port `80`, configure Nginx on the host machine as a reverse proxy:
+### Step 4 (Optional): Configure Nginx on the host (Dual HTTP/HTTPS Proxy)
+To protect sensitive credentials (such as plain-text passwords and BMC credentials) sent over API calls, it is highly recommended to configure Nginx on the host machine as a proxy. This configures HTTPS for client-facing APIs while allowing bare-metal node bootloader and check-in (phone-home) requests over HTTP (since minimal busybox `wget` and iPXE do not support TLS handshakes/certificates natively).
+
+> [!NOTE]
+> There are plans to migrate this reverse proxy setup directly into the Docker Compose configuration (as a containerized Nginx sidecar) in the future to keep the entire stack fully portable and self-contained.
+
+#### 1. Configure the TLS Certificates
+If you have an existing certificate and private key, place or reference them in your Nginx configuration. 
+
+Alternatively, if you do not have a certificate, generate a self-signed TLS certificate and private key on the host:
+```bash
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/nginx-selfsigned.key \
+  -out /etc/ssl/certs/nginx-selfsigned.crt \
+  -subj "/CN=<your-host-ip-address>"
+```
+
+#### 2. Apply Nginx Configuration
+A sample Nginx site configuration is provided at [configServer/nginx-ssl.conf](file:///home/mbuser11/project_astro_next/configServer/nginx-ssl.conf). Copy or point Nginx to this sample block in your active site configuration file (for example, `/etc/nginx/sites-available/ipxe-builder` or whichever configuration path your setup uses):
+
 ```nginx
-# Nginx Configuration File (e.g. /etc/nginx/sites-enabled/ipxe-builder)
 server {
-    listen 80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     server_name _;
+
     client_max_body_size 100M;
-    
+
+    # Enforce HTTPS redirect for sensitive API endpoints containing plain passwords
+    location /api/v1/servers/provision/custom-iso {
+        return 301 https://$host$request_uri;
+    }
+    location /api/v1/provision {
+        return 301 https://$host$request_uri;
+    }
+
+    # Plain HTTP fallback for non-sensitive boot assets & phone-home (required for busybox/iPXE)
     location / {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name _;
+
+    client_max_body_size 100M;
+
+    # SSL certificates (point these to your custom paths or the self-signed ones)
+    ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+    ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
+Verify your active configuration file and reload Nginx:
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
 ---
 
 ## 4. API Endpoints
@@ -193,11 +250,11 @@ Subiquity forwards installation stage logs back to the server.
 Retrieve the exact step of the bare-metal node installation.
 * URL: `GET /status?job_id=<job_id>` or `GET /api/v1/jobs/status?job_id=<job_id>`
 * Response Stages: `BOOTING` $\rightarrow$ `STAGING` $\rightarrow$ `PHONED_HOME` $\rightarrow$ `INSTALLING` $\rightarrow$ `COMPLETED` / `INSTALL_FAILED`.
-* Sample Call:
+* Sample call:
   ```bash
   curl http://<server-ip>:8000/status?job_id=test-node-01
   ```
-* Response Example:
+* Response example:
   ```json
   {
       "job_id": "test-node-01",

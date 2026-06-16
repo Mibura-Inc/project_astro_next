@@ -50,6 +50,7 @@ installer-launch.sh
 *.env
 secrets.yml
 vault.yml
+configServer/certs/
 
 # SSH keys
 id_rsa

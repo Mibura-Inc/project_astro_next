@@ -98,7 +98,7 @@ def buildAnsibleInventory(sourceDict, host_ip):
                 "vars": {
                     "validate_certs": False,
                     # Dynamically populated using the incoming interface parameter
-                    "api_base_url": f"http://{host_ip}"
+                    "api_base_url": f"https://{host_ip}"
                 },
                 "hosts": {
                     "testXR11": {

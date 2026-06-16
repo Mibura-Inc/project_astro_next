@@ -35,24 +35,56 @@ The configuration server utilizes the HTTP `Host` header (via `get_server_host()
 
 The project includes all compilers, boot creation tools, and Ansible playbooks in a unified Docker environment.
 
-### Step 1: Build and launch the Docker container
-Run the following commands in the project root to spin up the build environment:
+### Step 1: Build the Docker Container
+Run the following command in the project root to build the secure environment:
 ```bash
-# Build the Docker image containing necessary build tools and packages
+# Build the Docker images containing the necessary build tools and Nginx proxy
 sudo docker compose build
-
-# Clear host OS caches to maximize available memory (might not be necessary after recent changes)
-sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
-
-# Launch the container, exposing the API port (8000) and opening interactive terminal
-sudo docker compose run --rm --service-ports ipxe-builder
 ```
 
-### Step 2: Recompiling the Custom OS initramfs
+### Step 2: Configure & Launch the Stack
+To protect sensitive credentials (such as plain-text passwords and BMC credentials) sent over API calls, Astro includes a containerized Nginx sidecar proxy. It enforces HTTPS on port 443 for sensitive API calls, while allowing bare-metal node bootloader and check-in (phone-home) requests over HTTP on port 80.
 
-This compilation step must be run the first time you set up the project (to generate the initial RAMDISK image) as well as any time you modify the stage 1 bootstrap scripts under `customOS/myInitRD/` (such as `init`). 
+#### 1. Configure the TLS Certificates
+By default, the containerized Nginx proxy will automatically generate a self-signed SSL certificate (`server.crt`) and private key (`server.key`) inside the `configServer/certs/` directory on the host if they do not exist. The certificate Common Name (CN) defaults to `localhost`. 
 
-Rebuild and compress the initramfs using the compiled toolchain inside the Docker container:
+If you want the certificate to be generated for a specific IP address or domain (e.g. `10.10.0.1`), you can specify it by setting the `SERVER_CN` environment variable when running docker compose, or placing it in a local `.env` file:
+```bash
+SERVER_CN=SERVER_IP sudo docker compose up
+```
+
+If you wish to provide your own custom TLS certificates instead:
+1. Create the `configServer/certs/` folder:
+   ```bash
+   mkdir -p configServer/certs
+   ```
+2. Place your certificate and key files there:
+   - `configServer/certs/server.crt`
+   - `configServer/certs/server.key`
+
+#### 2. Launch the Stack
+To launch the entire secure stack (which starts both Nginx and the Python config server), run the following command in the project root:
+```bash
+# Clear host OS caches to maximize available memory (optional)
+sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches
+
+# Start Nginx (ports 80/443) and the config server (port 8000)
+sudo docker compose up
+```
+
+### Step 3: Interactive Shell & Rebuilding Custom OS
+While the stack is running, you can run build/compilation tasks and compile the custom OS RAMDISK image.
+
+#### 1. Shell into the Container
+Open a new terminal window on your host machine and run:
+```bash
+sudo docker compose exec ipxe-builder /bin/bash
+```
+
+#### 2. Recompiling the Custom OS initramfs
+This compilation step must be run the first time you set up the project (to generate the initial RAMDISK image) as well as any time you modify the stage 1 bootstrap scripts under `customOS/myInitRD/` (such as `init`).
+
+Rebuild and compress the initramfs using the compiled toolchain inside the running Docker container (run these commands inside the container shell you opened in the previous step):
 ```bash
 # Inside the Docker container (/work):
 chmod -R 777 /work/customOS/myInitRD/
@@ -62,88 +94,13 @@ find . -print0 | cpio --null -ov --format=newc | gzip -9 > /work/configServer/ht
 cd /work
 ```
 
-### Step 3: Start the config server (inside Docker container)
-Again, inside the container shell, run the HTTP control plane server:
-```bash
-python3 configServer/server.py
-```
-*The server will start listening on port `8000`.*
+#### 3. Shutdown and Clean Up
+* To stop the services, press `Ctrl + C` in the terminal where `sudo docker compose up` is running.
+* To clean up all containers and networks completely, run:
+  ```bash
+  sudo docker compose down
+  ```
 
-### Step 4 (Optional): Configure Nginx on the host (Dual HTTP/HTTPS Proxy)
-To protect sensitive credentials (such as plain-text passwords and BMC credentials) sent over API calls, it is highly recommended to configure Nginx on the host machine as a proxy. This configures HTTPS for client-facing APIs while allowing bare-metal node bootloader and check-in (phone-home) requests over HTTP (since minimal busybox `wget` and iPXE do not support TLS handshakes/certificates natively).
-
-> [!NOTE]
-> There are plans to migrate this reverse proxy setup directly into the Docker Compose configuration (as a containerized Nginx sidecar) in the future to keep the entire stack fully portable and self-contained.
-
-#### 1. Configure the TLS Certificates
-If you have an existing certificate and private key, place or reference them in your Nginx configuration. 
-
-Alternatively, if you do not have a certificate, generate a self-signed TLS certificate and private key on the host:
-```bash
-sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout /etc/ssl/private/nginx-selfsigned.key \
-  -out /etc/ssl/certs/nginx-selfsigned.crt \
-  -subj "/CN=<your-host-ip-address>"
-```
-
-#### 2. Apply Nginx Configuration
-A sample Nginx site configuration is provided at [configServer/nginx-ssl.conf](file:///home/mbuser11/project_astro_next/configServer/nginx-ssl.conf). Copy or point Nginx to this sample block in your active site configuration file (for example, `/etc/nginx/sites-available/ipxe-builder` or whichever configuration path your setup uses):
-
-```nginx
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name _;
-
-    client_max_body_size 100M;
-
-    # Enforce HTTPS redirect for sensitive API endpoints containing plain passwords
-    location /api/v1/servers/provision/custom-iso {
-        return 301 https://$host$request_uri;
-    }
-    location /api/v1/provision {
-        return 301 https://$host$request_uri;
-    }
-
-    # Plain HTTP fallback for non-sensitive boot assets & phone-home (required for busybox/iPXE)
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-
-server {
-    listen 443 ssl default_server;
-    listen [::]:443 ssl default_server;
-    server_name _;
-
-    client_max_body_size 100M;
-
-    # SSL certificates (point these to your custom paths or the self-signed ones)
-    ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
-    ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-Verify your active configuration file and reload Nginx:
-```bash
-sudo nginx -t
-sudo systemctl reload nginx
-```
 ---
 
 ## 4. API Endpoints

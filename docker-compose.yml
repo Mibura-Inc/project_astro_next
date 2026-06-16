@@ -7,6 +7,31 @@ services:
       - .:/work
     ports:
       - "8000:8000"
-    stdin_open: true # Equivalent to -i
-    tty: true        # Equivalent to -t
-    entrypoint: /bin/bash
+    # stdin_open: true # Equivalent to -i
+    # tty: true        # Equivalent to -t
+    # entrypoint: /bin/bash
+    command: python3 configServer/server.py
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./configServer/nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./configServer/certs:/etc/nginx/certs
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ ! -f /etc/nginx/certs/server.key ] || [ ! -f /etc/nginx/certs/server.crt ]; then
+          echo "SSL certificates not found. Generating self-signed keys..."
+          apk add --no-cache openssl
+          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout /etc/nginx/certs/server.key \
+            -out /etc/nginx/certs/server.crt \
+            -subj "/CN=50.191.180.133"
+        fi
+        exec nginx -g "daemon off;"
+    depends_on:
+      - ipxe-builder

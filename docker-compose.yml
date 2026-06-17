@@ -5,8 +5,6 @@ services:
       context: ./Docker
     volumes:
       - .:/work
-    ports:
-      - "8000:8000"
     # stdin_open: true # Equivalent to -i
     # tty: true        # Equivalent to -t
     # entrypoint: /bin/bash
@@ -20,6 +18,8 @@ services:
     volumes:
       - ./configServer/nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
       - ./configServer/certs:/etc/nginx/certs
+      - ./configServer/http/jobs:/var/www/http/automation:ro
+      - ./configServer/http/customOS:/var/www/http/customOS:ro
     entrypoint:
       - /bin/sh
       - -c

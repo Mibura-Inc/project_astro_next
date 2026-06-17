@@ -87,3 +87,10 @@ pytest_cache/
 .ansible_cache/initrd
 vmlinuz
 initrd
+
+# Redundant files and compilation directories
+README_old.md
+notes.md
+TODO.md
+task-tracker.md
+ipxe-builder/iso_temp/

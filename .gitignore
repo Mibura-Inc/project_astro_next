@@ -95,3 +95,4 @@ TODO.md
 task-tracker.md
 ipxe-builder/iso_temp/
 ipxe-builder/boot.ipxe
+configServer/ansible/old/

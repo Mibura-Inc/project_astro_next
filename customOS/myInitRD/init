@@ -457,7 +457,7 @@ sleep 10
 
 API_URL="http://${SERVER_IP}/api/v1/servers"
 AUTOMATION_URL="http://${SERVER_IP}/automation"
-PORT="8000"
+PORT="80"
 echo "Phoning home to API..."
 # The server.py expects 'job_id' and 'uuids'
 # We use $DISKS_JSON for the 'uuids' field to help the server decide on the drive

@@ -54,7 +54,7 @@ Drawing inspiration from OpenStack's modular appraoch, and revolving around the 
         - Job status check
     - custom ISO generation 
 
-<img src="./Untitled Diagram-Page-13.drawio.png" alt="diagram" />
+<img src="./pics/Untitled Diagram-Page-13.drawio.png" alt="diagram" />
 
 ## Capabilities
 

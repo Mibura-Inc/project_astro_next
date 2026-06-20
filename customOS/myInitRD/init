@@ -386,8 +386,8 @@ echo "Server IP: $SERVER_IP"
 # Fallback safety default just in case it's missing
 # if [ -z "$SERVER_IP" ]; then
 #     echo "WARNING: 'astro_server_ip' variable missing"
-#     echo "Falling back to hardcoded default: 50.191.180.133"
-#     SERVER_IP="50.191.180.133"
+#     echo "Falling back to hardcoded default: ${SERVER_IP}"
+#     SERVER_IP="${SERVER_IP}
 # fi
 
 # ---------------------------------------------
@@ -448,8 +448,8 @@ echo "Disk inventory ready"
 # Send it
 # PAYLOAD="{\"jobid\":\"$JOBID\",\"machine_serial\":\"$MACHINE_SERIAL\",\"disks\":$DISKS_JSON}"
 
-# printf "POST /report HTTP/1.1\r\nHost: 50.191.180.133\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
-#   "${#PAYLOAD}" "$PAYLOAD" | nc 50.191.180.133 8000
+# printf "POST /report HTTP/1.1\r\nHost: ${SERVER_IP}\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
+#   "${#PAYLOAD}" "$PAYLOAD" | nc ${SERVER_IP} 80
 
 # ------------------------------------------
 
@@ -501,67 +501,3 @@ echo ""
 echo "Executing installer-launch.sh..."
 sh /tmp/installer-launch.sh
 
-# http://releases.ubuntu.com/24.04/netboot/amd64/linux
-# wget -O /linux http://50.191.180.130/automation/ubuntu-22.04.5/amd64/linux || {
-#     echo "ERROR: Failed to download kernel"
-#     exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
-# }
-
-# echo "Downloading Ubuntu initrd..."
-# # http://releases.ubuntu.com/24.04/netboot/amd64/initrd
-# wget -O /initrd http://50.191.180.130/automation/ubuntu-22.04.5/amd64/initrd || {
-#     echo "ERROR: Failed to download initrd" 
-#     exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
-# }
-
-# echo "Download complete!"
-# ls -l /linux /initrd
-
-# #--------------------------------------------
-# # check item reachability
-
-# wget -q -O /dev/null http://50.191.180.133:8080/$JOBID/user-data || {
-#     echo "ERROR: cloud-init not ready"
-#     exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
-# }
-
-#------------------------------------------
-
-# echo "Preparing kexec..."
-
-# \
-# # http://releases.ubuntu.com/24.04/ubuntu-24.04.3-live-server-amd64.iso
-# APPEND="ip=${IP_PARAM} BOOTIF=${BOOTIF_RAW} \
-# url=http://releases.ubuntu.com/22.04/ubuntu-22.04.5-live-server-amd64.iso \ 
-# autoinstall ds=nocloud-net;s=http://50.191.180.133:8080/${JOBID}/ \
-# cloud-config-url=/dev/null \
-# cloud-init=debug \
-# multipath=off \
-# nvme_core.multipath=0 \
-# rd.multipath=0 \
-# fs-path=casper root=tmpfs ignore_uuid \
-# console=ttyS0,115200 console=tty0 \
-# systemd.log_level=info ---"
-
-# # safeguard: only include BOOTIF if present
-# [ -z "$BOOTIF_RAW" ] && APPEND="$(echo "$APPEND" | sed 's/ BOOTIF=[^ ]*//')"
-
-# echo "Kernel cmdline for next boot:"
-# echo "$APPEND"
-
-# Load kernel
-# /bin/kexec-amd64 -l /linux \
-#   --initrd=/initrd \
-#   --append="$APPEND" || {
-#     echo "ERROR: kexec load failed"
-#     exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0
-# }
-
-# # Execute
-# echo "Executing kexec..."
-# /bin/kexec-amd64 -e
-
-# # 7. Start interactive shell with network access
-# echo ""
-# echo "Starting interactive shell..."
-# exec setsid cttyhack /bin/sh <>/dev/tty0 1>&0 2>&0

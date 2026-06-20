@@ -8,7 +8,7 @@ Astro is an automated, UEFI-compliant, dynamic bare-metal provisioning system fo
 
 Astro use a staged execution pattern to keep the initial boot media lightweight and ensure all configuration changes are dynamically computed at run-time:
 
-WIP
+For a comprehensive explanation of the architecture, sequence diagrams, and design details, please refer to the [docs](docs/) directory.
 
 ### Component Breakdown
 1. Config server & API (`configServer/server.py`): 
@@ -29,6 +29,13 @@ The configuration server utilizes the HTTP `Host` header (via `get_server_host()
 * Adaptable: You can run the server on `localhost` for testing, bind it to a local private subnet IP, or run it behind a public domain name. The API will dynamically adjust its response payloads.
 * probed boot variables: During the ISO build step, `compose.py` extracts the server hostname from the request context and embeds it as `serverip` in the iPXE kernel command line. This allows the booting Node to know exactly where to phone home.
 
+### Hosting Boot & Installation Assets Locally (Optional Self-Hosting)
+By default, the system resolves and streams the official Ubuntu boot assets (kernel, initrd) and installation ISOs from Canonical's public servers (`releases.ubuntu.com`) or GitHub repositories.
+
+If you prefer to host these assets locally within your own network (to speed up deployments or support offline installs):
+1. Using Custom URLs: You can edit the `"kernel"`, `"initrd"`, and `"iso"` URL targets in [release-map.json](configServer/templates/ubuntu/release-map.json) to point directly to any internal fileserver or local repository IP of your choice (e.g., `http://10.10.0.10/assets/ubuntu/linux`, `http://10.10.0.10/assets/ubuntu/initrd`, and `http://10.10.0.10/assets/ubuntu/ubuntu-24.04.4-live-server-amd64.iso`).
+2. Dynamic Overrides: You can also configure custom `base_url` or `generated_iso_url` parameters to point the playbooks and installer to your custom hosted URL targets.
+
 ---
 
 ## 3. How to Run the Project
@@ -45,13 +52,14 @@ sudo docker compose build
 ### Step 2: Configure & Launch the Stack
 To protect sensitive credentials (such as plain-text passwords and BMC credentials) sent over API calls, Astro includes a containerized Nginx sidecar proxy. It enforces HTTPS on port 443 for sensitive API calls, while allowing bare-metal node bootloader and check-in (phone-home) requests over HTTP on port 80.
 
-#### 1. Configure the TLS Certificates
+#### 1. Configure the TLS Certificates & Server IP
 By default, the containerized Nginx proxy will automatically generate a self-signed SSL certificate (`server.crt`) and private key (`server.key`) inside the `configServer/certs/` directory on the host if they do not exist. The certificate Common Name (CN) defaults to `localhost`. 
 
-If you want the certificate to be generated for a specific IP address or domain (e.g. `10.10.0.1`), you can specify it by setting the `SERVER_CN` environment variable when running docker compose, or placing it in a local `.env` file:
-```bash
-SERVER_CN=SERVER_IP sudo docker compose up
-```
+To configure the server's IP address or domain (e.g., `10.10.0.1`) across the Nginx proxy, Python API server, and Ansible playbooks, create a `.env` file in the root directory:
+```env
+SERVER_IP=10.10.0.1
+
+This will automatically configure the SSL certificate's Common Name (CN) and populate configurations dynamically.
 
 If you wish to provide your own custom TLS certificates instead:
 1. Create the `configServer/certs/` folder:
@@ -187,8 +195,8 @@ Called by the micro-initramfs of the booted target node to report hardware attri
       "machine_serial": "SM-ABCD12345",
       "bootif": "01-11-22-33-44-55-66",
       "uuids": [
-          {"dev": "sda", "id": "SAMSUNG_SSD_123", "size_mb": 512000},
-          {"dev": "sdb", "id": "SAMSUNG_SSD_456", "size_mb": 512000}
+          {"dev": "sda", "id": "xyz_company_SSD_123", "size_mb": 512000},
+          {"dev": "sdb", "id": "xyz_company_SSD_456", "size_mb": 512000}
       ]
   }
   ```

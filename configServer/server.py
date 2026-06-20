@@ -18,9 +18,15 @@ RELEASE_MAP_FILE = f"{TEMPLATE_DIR}/release-map.json"
 JOB_TRACKER = {}       # Keeps pointers to background Ansible runners
 PROGRESS_TRACKER = {}  # Holds real-time lifecycle states for the provision pipelines
 
-def load_release_map():
+def load_release_map(host_ip=None):
     with open(RELEASE_MAP_FILE, "r") as f:
-        return json.load(f)
+        content = f.read()
+    if host_ip:
+        content = content.replace("{{API_HOST}}", host_ip)
+    else:
+        server_ip = os.getenv("SERVER_IP", "localhost")
+        content = content.replace("{{API_HOST}}", server_ip)
+    return json.loads(content)
 
 def render_template(template_path, output_path, substitutions):
     with open(template_path, "r") as f:
@@ -383,7 +389,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 raw_data = json.loads(body.decode())
 
                 os_ver = raw_data.get("os_version", "24.04.4")
-                release_map = load_release_map()
+                release_map = load_release_map(host_ip)
                 release_info = release_map[os_ver]
                 if os_ver not in release_map:
                     raise Exception(f"Version {os_ver} not found in release-map.json")
@@ -541,7 +547,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 else:
                     apt_suites_value = "[]"
 
-                release_map = load_release_map()
+                release_map = load_release_map(host_ip)
 
                 if os_ver not in release_map:
                     raise Exception(f"Unsupported version: {os_ver}")

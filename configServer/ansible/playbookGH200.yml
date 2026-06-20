@@ -7,7 +7,7 @@
   vars:
       # Note: If you want the serial number, it is at: /redfish/v1/Systems/1, body: "SerialNumber"
       # UNCOMMENT the line below to use a manual link instead of the API
-      generated_iso_url: "http://50.191.180.130/isos/ubuntu-24.04.4-live-server-arm64.iso"
+      generated_iso_url: "http://{{ lookup('env', 'SERVER_IP') | default('localhost', true) }}/isos/ubuntu-24.04.4-live-server-arm64.iso"
 
   tasks:
     # - name: Step 1 - Generate the ISO

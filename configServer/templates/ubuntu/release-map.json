@@ -2,25 +2,25 @@
   "24.04.4": {
     "kernel": "http://releases.ubuntu.com/24.04/netboot/amd64/linux",
     "initrd": "http://releases.ubuntu.com/24.04/netboot/amd64/initrd",
-    "iso": "http://50.191.180.133/web/releases.ubuntu.com/24.04.4/ubuntu-24.04.4-live-server-amd64.iso"
+    "iso": "http://{{API_HOST}}/web/releases.ubuntu.com/24.04.4/ubuntu-24.04.4-live-server-amd64.iso"
   },
 
   "24.04.3": {
     "kernel": "http://releases.ubuntu.com/24.04/netboot/amd64/linux",
     "initrd": "http://releases.ubuntu.com/24.04/netboot/amd64/initrd",
-    "iso": "http://50.191.180.133/web/releases.ubuntu.com/24.04.3/ubuntu-24.04.3-live-server-amd64.iso"
+    "iso": "http://{{API_HOST}}/web/releases.ubuntu.com/24.04.3/ubuntu-24.04.3-live-server-amd64.iso"
   },
 
   "24.04.2": {
     "kernel": "http://releases.ubuntu.com/24.04/netboot/amd64/linux",
     "initrd": "http://releases.ubuntu.com/24.04/netboot/amd64/initrd",
-    "iso": "http://50.191.180.133/web/releases.ubuntu.com/24.04.2/ubuntu-24.04.2-live-server-amd64.iso"
+    "iso": "http://{{API_HOST}}/web/releases.ubuntu.com/24.04.2/ubuntu-24.04.2-live-server-amd64.iso"
   },
 
   "22.04.5": {
     "kernel": "http://github.com/netbootxyz/ubuntu-squash/releases/download/22.04.5-be230164/vmlinuz",
     "initrd": "http://github.com/netbootxyz/ubuntu-squash/releases/download/22.04.5-be230164/initrd",
-    "iso": "http://50.191.180.133/web/releases.ubuntu.com/22.04.5/ubuntu-22.04.5-live-server-amd64.iso"
+    "iso": "http://{{API_HOST}}/web/releases.ubuntu.com/22.04.5/ubuntu-22.04.5-live-server-amd64.iso"
 
   }
   

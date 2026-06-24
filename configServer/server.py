@@ -79,7 +79,7 @@ def validate_provision_data(data):
     return True, None, data
 
 # Pass host_ip dynamically into the inventory configuration generator
-def buildAnsibleInventory(sourceDict, host_ip):
+def buildAnsibleInventory(sourceDict, host_ip, is_WTR):
     bmc_address = sourceDict.get('bmc_address')
     bmc_username = sourceDict.get('bmc_username')
     bmc_password = sourceDict.get('bmc_password')
@@ -99,6 +99,10 @@ def buildAnsibleInventory(sourceDict, host_ip):
     os_dns_servers = sourceDict.get('dns_servers')
     os_raid = sourceDict.get('raid')
 
+    ansibleHostName = "testXR11"
+    if is_WTR:
+        ansibleHostName = "testWTR"
+
     ansible_inventory = {
             "all": {
                 "vars": {
@@ -107,7 +111,7 @@ def buildAnsibleInventory(sourceDict, host_ip):
                     "api_base_url": f"https://{host_ip}"
                 },
                 "hosts": {
-                    "testXR11": {
+                    ansibleHostName: {
                         "bmc_address": bmc_address,
                         "bmc_user": bmc_username,
                         "bmc_password": bmc_password,
@@ -635,9 +639,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/v1/provision":
             try:
                 raw_data = json.loads(body.decode())
+                is_WTR = raw_data.get("is_wtr")
                 # Pass the dynamically extracted host_ip straight into the generator
-                inventory = buildAnsibleInventory(raw_data, host_ip)
+                inventory = buildAnsibleInventory(raw_data, host_ip,is_WTR)
                 job_id = raw_data.get("hostname")
+                
                 
                 # Flag lifecycle tracker as STAGING right before spawning thread
                 PROGRESS_TRACKER[job_id] = {
@@ -645,12 +651,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "detail": "Ansible playbook running out-of-band initialization calls via BMC/iDRAC."
                 }
 
-                threadObject, runnerObject = ansible_runner.run_async(
-                    private_data_dir=ANSIBLE_DIR,
-                    playbook='playbookDell.yml',
-                    inventory=inventory,
-                    ident=job_id
-                )
+                if is_WTR:
+                        threadObject, runnerObject = ansible_runner.run_async(
+                        private_data_dir=ANSIBLE_DIR,
+                        playbook='playbookSupermicro.yml',
+                        inventory=inventory,
+                        ident=job_id
+                    )
+                else:
+                    threadObject, runnerObject = ansible_runner.run_async(
+                        private_data_dir=ANSIBLE_DIR,
+                        playbook='playbookDell.yml',
+                        inventory=inventory,
+                        ident=job_id
+                    )
 
                 # 3. Store the runner object using its unique execution ID
                 JOB_TRACKER[job_id] = runnerObject

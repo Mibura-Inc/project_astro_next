@@ -147,8 +147,10 @@ Initiates the compilation of a dynamic, UEFI-bootable ISO tailored to the target
   }
   ```
 
-### 2. Ansible Provision Staging (iDRAC BMC)
-Launches Ansible playbook `playbookDell.yml` in the background to configure BMC settings.
+### 2. Ansible Provision Staging (Dell iDRAC & Supermicro WTR)
+Launches a background Ansible playbook to mount virtual media and boot the target bare-metal server.
+* **Dell iDRAC**: Runs `playbookDell.yml` by default.
+* **Supermicro WTR**: Automatically runs `playbookSupermicro.yml` when `"is_wtr": true` is specified in the request body.
 
 * URL: `POST /api/v1/provision`
 * Request Body:
@@ -171,7 +173,8 @@ Launches Ansible playbook `playbookDell.yml` in the background to configure BMC 
       "ipv6_gateway": "fe80::1234:1234:1234:1234",
       "ipv6_cidr": "64",
       "dns_servers": "8.8.8.8,8.8.4.4,1.1.1.1,2001:4860:4860::8888",
-      "raid": false
+      "raid": false,
+      "is_wtr": true
   }
   ```
 * Response:

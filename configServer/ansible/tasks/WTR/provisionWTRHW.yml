@@ -11,69 +11,69 @@
     body_format: json
     body: {}
 
-# - name: Insert New ISO (Manual URI)
-#   ansible.builtin.uri:
-#     url: "https://{{ bmc_address }}/redfish/v1/Managers/1/VirtualMedia/CD1/Actions/VirtualMedia.InsertMedia"
-#     method: POST
-#     user: "{{ bmc_user }}"
-#     password: "{{ bmc_password }}"
-#     force_basic_auth: yes
-#     status_code: [200, 204, 202]
-#     validate_certs: no
-#     body_format: json
-#     body:
-#       Image: "{{ generated_iso_url }}"
-#       UserName: "" 
-#       Password: ""
+- name: Insert New ISO (Manual URI)
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Managers/1/VirtualMedia/CD1/Actions/VirtualMedia.InsertMedia"
+    method: POST
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: yes
+    status_code: [200, 204, 202]
+    validate_certs: no
+    body_format: json
+    body:
+      Image: "{{ generated_iso_url }}"
+      UserName: "" 
+      Password: ""
 
-# - name: Set One-Time Boot to Virtual CD
-#   ansible.builtin.uri:
-#     url: "https://{{ bmc_address }}/redfish/v1/Systems/1"
-#     method: PATCH
-#     user: "{{ bmc_user }}"
-#     password: "{{ bmc_password }}"
-#     force_basic_auth: yes
-#     status_code: [200, 204]
-#     validate_certs: no
-#     body_format: json
-#     body:
-#       Boot:
-#         BootSourceOverrideEnabled: "Once"
-#         BootSourceOverrideMode: "UEFI"
-#         BootSourceOverrideTarget: "UsbCd"
+- name: Set One-Time Boot to Virtual CD
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Systems/1"
+    method: PATCH
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: yes
+    status_code: [200, 204]
+    validate_certs: no
+    body_format: json
+    body:
+      Boot:
+        BootSourceOverrideEnabled: "Once"
+        BootSourceOverrideMode: "UEFI"
+        BootSourceOverrideTarget: "UsbCd"
 
-# - name: Get Current Power State
-#   ansible.builtin.uri:
-#     url: "https://{{ bmc_address }}/redfish/v1/Systems/1"
-#     method: GET
-#     user: "{{ bmc_user }}"
-#     password: "{{ bmc_password }}"
-#     force_basic_auth: yes
-#     validate_certs: no
-#   register: system_state
+- name: Get Current Power State
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Systems/1"
+    method: GET
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: yes
+    validate_certs: no
+  register: system_state
 
-# - name: Power On or Reboot
-#   ansible.builtin.uri:
-#     url: "https://{{ bmc_address }}/redfish/v1/Systems/1/Actions/ComputerSystem.Reset"
-#     method: POST
-#     user: "{{ bmc_user }}"
-#     password: "{{ bmc_password }}"
-#     force_basic_auth: yes
-#     status_code: [200, 204]
-#     validate_certs: no
-#     body_format: json
-#     body:
-#       # Use ForceRestart to ensure the BIOS cycle triggers the One-Time Boot immediately
-#       ResetType: "{{ 'On' if system_state.json.PowerState == 'Off' else 'ForceRestart' }}"
+- name: Power On or Reboot
+  ansible.builtin.uri:
+    url: "https://{{ bmc_address }}/redfish/v1/Systems/1/Actions/ComputerSystem.Reset"
+    method: POST
+    user: "{{ bmc_user }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: yes
+    status_code: [200, 204]
+    validate_certs: no
+    body_format: json
+    body:
+      # Use ForceRestart to ensure the BIOS cycle triggers the One-Time Boot immediately
+      ResetType: "{{ 'On' if system_state.json.PowerState == 'Off' else 'ForceRestart' }}"
 
-# - name: Buffer - Wait for BMC to initiate Boot
-#   ansible.builtin.pause:
-#     seconds: 30
+- name: Buffer - Wait for BMC to initiate Boot
+  ansible.builtin.pause:
+    seconds: 30
 
-# - name: Step 2.5 - Clear Old SSH Keys
-#   ansible.builtin.command: "ssh-keygen -f '~/.ssh/known_hosts' -R '{{ ansible_host }}'"
-#   delegate_to: localhost
-#   failed_when: false
+- name: Step 2.5 - Clear Old SSH Keys
+  ansible.builtin.command: "ssh-keygen -f '~/.ssh/known_hosts' -R '{{ ansible_host }}'"
+  delegate_to: localhost
+  failed_when: false
 
 # - name: Step 3 - Wait for Installer to respond to Ping
 #   ansible.builtin.wait_for:

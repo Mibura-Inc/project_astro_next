@@ -8,6 +8,114 @@ import ipaddress
 import re
 import ansible_runner
 from pathlib import Path
+from pydantic import BaseModel, Field, field_validator, ValidationInfo, ValidationError
+from typing import Optional, List
+
+def validate_ipv4(v: str) -> str:
+    try:
+        ipaddress.IPv4Address(v)
+    except ValueError:
+        raise ValueError(f"Invalid IPv4 address format: {v}")
+    return v
+
+def validate_ipv6(v: str) -> str:
+    try:
+        ipaddress.IPv6Address(v)
+    except ValueError:
+        raise ValueError(f"Invalid IPv6 address format: {v}")
+    return v
+
+class ProvisionCustomISORequest(BaseModel):
+    hostname: str = Field(..., min_length=1)
+    ipv4_address: str
+    ipv4_gateway: str
+    ipv4_netmask: str
+    os_version: str = "24.04.4"
+    username: str = "ubuntu"
+    password: str = "ubuntu"
+    dns_servers: str = "8.8.8.8"
+    raid: bool = False
+    disable_updates: bool = True
+    ipv6_address: Optional[str] = None
+    ipv6_gateway: Optional[str] = None
+    ipv6_cidr: str = "64"
+
+    @field_validator("ipv4_address", "ipv4_gateway", "ipv4_netmask")
+    @classmethod
+    def validate_ipv4_fields(cls, v: str) -> str:
+        return validate_ipv4(v)
+
+    @field_validator("ipv6_address")
+    @classmethod
+    def validate_ipv6_addr(cls, v: Optional[str]) -> Optional[str]:
+        if v:
+            return validate_ipv6(v)
+        return v
+
+    @field_validator("ipv6_gateway")
+    @classmethod
+    def validate_ipv6_gw(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+        ipv6_addr = info.data.get("ipv6_address")
+        if ipv6_addr:
+            if not v:
+                raise ValueError("IPv6 address provided but 'ipv6_gateway' is missing")
+            return validate_ipv6(v)
+        return v
+
+class AnsibleProvisionRequest(BaseModel):
+    bmc_address: str = Field(..., min_length=1)
+    bmc_username: str = Field(..., min_length=1)
+    bmc_password: str = Field(..., min_length=1)
+    os_type: str = Field(..., min_length=1)
+    os_version: str = Field(..., min_length=1)
+    arch: str = Field(..., min_length=1)
+    variant: str = Field(..., min_length=1)
+    hostname: str = Field(..., min_length=1)
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+    ipv4_address: str
+    ipv4_gateway: str
+    ipv4_netmask: str
+    ipv6_address: Optional[str] = None
+    ipv6_gateway: Optional[str] = None
+    ipv6_cidr: Optional[str] = "64"
+    dns_servers: str = "8.8.8.8"
+    raid: bool = False
+    disable_updates: bool = True
+    is_wtr: bool = False
+
+    @field_validator("ipv4_address", "ipv4_gateway", "ipv4_netmask")
+    @classmethod
+    def validate_ipv4_fields(cls, v: str) -> str:
+        return validate_ipv4(v)
+
+    @field_validator("ipv6_address")
+    @classmethod
+    def validate_ipv6_addr(cls, v: Optional[str]) -> Optional[str]:
+        if v:
+            return validate_ipv6(v)
+        return v
+
+    @field_validator("ipv6_gateway")
+    @classmethod
+    def validate_ipv6_gw(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+        ipv6_addr = info.data.get("ipv6_address")
+        if ipv6_addr:
+            if not v:
+                raise ValueError("IPv6 address provided but 'ipv6_gateway' is missing")
+            return validate_ipv6(v)
+        return v
+
+class DiskInfo(BaseModel):
+    dev: str = Field(..., min_length=1)
+    id: str = Field(..., min_length=1)
+    size_mb: int = Field(..., gt=0)
+
+class PhoneHomeRequest(BaseModel):
+    job_id: str = Field(..., min_length=1)
+    machine_serial: str = Field(..., min_length=1)
+    bootif: str = Field(..., min_length=1)
+    uuids: List[DiskInfo]
 
 JOBS_DIR = "/work/configServer/http/jobs"
 TEMPLATE_DIR = "/work/configServer/templates/ubuntu"
@@ -38,45 +146,6 @@ def render_template(template_path, output_path, substitutions):
     with open(output_path, "w") as f:
         f.write(content)
 
-def validate_provision_data(data):
-    """
-    Validates the incoming JSON for the provision endpoint.
-    Returns (is_valid, error_message, cleaned_data)
-    """
-    # 1. Mandatory Core Fields
-    mandatory = ["ipv4_address", "ipv4_gateway", "ipv4_netmask", "hostname"]
-    for field in mandatory:
-        if field not in data or not str(data[field]).strip():
-            return False, f"Missing mandatory field: {field}", None
-
-    # 2. Set Defaults for Optional Fields
-    data.setdefault("os_version", "24.04.4")
-    data.setdefault("username", "ubuntu")
-    data.setdefault("password", "ubuntu")
-    data.setdefault("dns_servers", "8.8.8.8")
-    data.setdefault("raid", False)
-    data.setdefault("ifn", "")
-
-    try:
-        ipaddress.IPv4Address(data["ipv4_address"])
-        ipaddress.IPv4Address(data["ipv4_gateway"])
-        ipaddress.IPv4Address(data["ipv4_netmask"])
-    except ValueError as e:
-        return False, f"Invalid IPv4 format: {e}", None
-
-    if data.get("ipv6_address"):
-        try:
-            ipaddress.IPv6Address(data["ipv6_address"])
-            data.setdefault("ipv6_cidr", "64") 
-            
-            # We still need a gateway for a valid static config
-            if not data.get("ipv6_gateway"):
-                return False, "IPv6 address provided but 'ipv6_gateway' is missing", None
-            ipaddress.IPv6Address(data["ipv6_gateway"])
-        except ValueError as e:
-            return False, f"Invalid IPv6 format: {e}", None
-
-    return True, None, data
 
 # Pass host_ip dynamically into the inventory configuration generator
 def buildAnsibleInventory(sourceDict, host_ip, is_WTR):
@@ -390,7 +459,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if self.path == "/api/v1/servers/provision/custom-iso":
             try:
-                raw_data = json.loads(body.decode())
+                payload = json.loads(body.decode())
+                validated_data = ProvisionCustomISORequest(**payload)
+                raw_data = validated_data.model_dump()
+            except ValidationError as e:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                formatted_errors = [{"loc": err["loc"], "msg": err["msg"], "type": err["type"]} for err in e.errors()]
+                self.wfile.write(json.dumps({"success": False, "errors": formatted_errors}).encode())
+                return
+            except Exception as e:
+                print(f"[PROVISION] JSON parse error: {e}")
+                self.send_response(400)
+                self.end_headers()
+                return
+
+            try:
 
                 os_ver = raw_data.get("os_version", "24.04.4")
                 release_map = load_release_map(host_ip)
@@ -458,7 +543,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if self.path == "/api/v1/servers/phone-home":
             try:
-                data = json.loads(body.decode())
+                payload = json.loads(body.decode())
+                validated_data = PhoneHomeRequest(**payload)
+                data = validated_data.model_dump()
+            except ValidationError as e:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                formatted_errors = [{"loc": err["loc"], "msg": err["msg"], "type": err["type"]} for err in e.errors()]
+                self.wfile.write(json.dumps({"success": False, "errors": formatted_errors}).encode())
+                return
+            except Exception as e:
+                print(f"[PHONE-HOME] JSON parse error: {e}")
+                self.send_response(400)
+                self.end_headers()
+                return
+
+            try:
 
                 # print("[PHONE-HOME] PARSED JSON")
                 # print(json.dumps(data, indent=4))
@@ -638,7 +739,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if self.path == "/api/v1/provision":
             try:
-                raw_data = json.loads(body.decode())
+                payload = json.loads(body.decode())
+                validated_data = AnsibleProvisionRequest(**payload)
+                raw_data = validated_data.model_dump()
+            except ValidationError as e:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                formatted_errors = [{"loc": err["loc"], "msg": err["msg"], "type": err["type"]} for err in e.errors()]
+                self.wfile.write(json.dumps({"success": False, "errors": formatted_errors}).encode())
+                return
+            except Exception as e:
+                print(f"[Ansible Provision] JSON parse error: {e}")
+                self.send_response(400)
+                self.end_headers()
+                return
+
+            try:
                 is_WTR = raw_data.get("is_wtr")
                 # Pass the dynamically extracted host_ip straight into the generator
                 inventory = buildAnsibleInventory(raw_data, host_ip,is_WTR)

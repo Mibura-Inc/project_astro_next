@@ -60,7 +60,7 @@ ENV SRC_DIR=/work/ipxe/src \
 
 WORKDIR /work
 
-RUN pip install ansible ansible-runner --break-system-packages
+RUN pip install ansible ansible-runner pydantic --break-system-packages
 
 # Entrypoint: ensure build.sh is executable and run it
 # RUN printf '%s\n' \

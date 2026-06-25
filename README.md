@@ -149,8 +149,8 @@ Initiates the compilation of a dynamic, UEFI-bootable ISO tailored to the target
 
 ### 2. Ansible Provision Staging (Dell iDRAC & Supermicro WTR)
 Launches a background Ansible playbook to mount virtual media and boot the target bare-metal server.
-* **Dell iDRAC**: Runs `playbookDell.yml` by default.
-* **Supermicro WTR**: Automatically runs `playbookSupermicro.yml` when `"is_wtr": true` is specified in the request body.
+* Dell iDRAC: Runs `playbookDell.yml` by default.
+* Supermicro WTR: Automatically runs `playbookSupermicro.yml` when `"is_wtr": true` is specified in the request body.
 
 * URL: `POST /api/v1/provision`
 * Request Body:

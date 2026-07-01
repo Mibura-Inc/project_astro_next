@@ -1,0 +1,29 @@
+# To use a local ISO for a specific version:
+# 1. Place the ISO file in configServer/http/customOS/releases.ubuntu.com/<version>/
+# 2. Uncomment the "iso:" line for that version.
+#
+# If the "iso:" key is commented out or missing, the server will automatically
+# download the official ISO directly from canonical's mirrors.
+
+"24.04.4":
+  kernel: "http://releases.ubuntu.com/24.04/netboot/amd64/linux"
+  initrd: "http://releases.ubuntu.com/24.04/netboot/amd64/initrd"
+  iso: "http://{{API_HOST}}/customOS/releases.ubuntu.com/24.04.4/ubuntu-24.04.4-live-server-amd64.iso"
+
+"24.04.3":
+  kernel: "http://releases.ubuntu.com/24.04/netboot/amd64/linux"
+  initrd: "http://releases.ubuntu.com/24.04/netboot/amd64/initrd"
+  iso: "http://{{API_HOST}}/customOS/releases.ubuntu.com/24.04.3/ubuntu-24.04.3-live-server-amd64.iso"
+
+"24.04.2":
+  kernel: "http://releases.ubuntu.com/24.04/netboot/amd64/linux"
+  initrd: "http://releases.ubuntu.com/24.04/netboot/amd64/initrd"
+  # To use a local ISO (if available), uncomment the line below:
+  # iso: "http://{{API_HOST}}/customOS/releases.ubuntu.com/24.04.2/ubuntu-24.04.2-live-server-amd64.iso"
+
+"22.04.5":
+  kernel: "http://{{API_HOST}}/customOS/releases.ubuntu.com/22.04.5/netboot/amd64/vmlinuz"
+  initrd: "http://{{API_HOST}}/customOS/releases.ubuntu.com/22.04.5/netboot/amd64/initrd"
+  # "kernel": "http://github.com/netbootxyz/ubuntu-squash/releases/download/22.04.5-be230164/vmlinuz"
+  # "initrd": "http://github.com/netbootxyz/ubuntu-squash/releases/download/22.04.5-be230164/initrd"
+  iso: "http://{{API_HOST}}/customOS/releases.ubuntu.com/22.04.5/ubuntu-22.04.5-live-server-amd64.iso"

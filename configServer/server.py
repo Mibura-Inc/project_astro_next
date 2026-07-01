@@ -6,6 +6,7 @@ import uuid
 import subprocess
 import ipaddress
 import re
+import yaml
 import ansible_runner
 from pathlib import Path
 from pydantic import BaseModel, Field, field_validator, ValidationInfo, ValidationError
@@ -120,7 +121,7 @@ class PhoneHomeRequest(BaseModel):
 JOBS_DIR = "/work/configServer/http/jobs"
 TEMPLATE_DIR = "/work/configServer/templates/ubuntu"
 ANSIBLE_DIR = "/work/configServer/ansible"
-RELEASE_MAP_FILE = f"{TEMPLATE_DIR}/release-map.json"
+RELEASE_MAP_FILE = f"{TEMPLATE_DIR}/release-map.yml"
 
 # State trackers
 JOB_TRACKER = {}       # Keeps pointers to background Ansible runners
@@ -134,7 +135,7 @@ def load_release_map(host_ip=None):
     else:
         server_ip = os.getenv("SERVER_IP", "localhost")
         content = content.replace("{{API_HOST}}", server_ip)
-    return json.loads(content)
+    return yaml.safe_load(content)
 
 def render_template(template_path, output_path, substitutions):
     with open(template_path, "r") as f:
@@ -481,7 +482,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 release_map = load_release_map(host_ip)
                 release_info = release_map[os_ver]
                 if os_ver not in release_map:
-                    raise Exception(f"Version {os_ver} not found in release-map.json")
+                    raise Exception(f"Version {os_ver} not found in release-map.yml")
 
                 release_info = release_map[os_ver]
                 
@@ -660,6 +661,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 release = release_map[os_ver]
                 dns_first = job_data.get("dns_servers", "8.8.8.8").split(',')[0]
 
+                # Resolve ISO URL: use local if configured in YAML, otherwise use official URL
+                if "iso" in release:
+                    iso_url = release["iso"]
+                else:
+                    major_ver = ".".join(os_ver.split('.')[:2])
+                    iso_url = f"http://releases.ubuntu.com/{major_ver}/ubuntu-{os_ver}-live-server-amd64.iso"
+
                 ipv6_full = f"{ipv6_address}/{ipv6_cidr}" if ipv6_address and ipv6_cidr else ""
 
                 substitutions = {
@@ -706,7 +714,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "__DNS_PRIMARY__": dns_first,
                     "__KERNEL_URL__": release["kernel"],
                     "__INITRD_URL__": release["initrd"],
-                    "__ISO_URL__": release["iso"],
+                    "__ISO_URL__": iso_url,
                     "__SEED_URL__": f"{base_url}/{job_id}",
                     "__IPV4_ADDRESS__": job_data["ipv4_address"],
                     "__IPV4_GATEWAY__": job_data["ipv4_gateway"],

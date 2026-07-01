@@ -30,11 +30,27 @@ The configuration server utilizes the HTTP `Host` header (via `get_server_host()
 * probed boot variables: During the ISO build step, `compose.py` extracts the server hostname from the request context and embeds it as `serverip` in the iPXE kernel command line. This allows the booting Node to know exactly where to phone home.
 
 ### Hosting Boot & Installation Assets Locally (Optional Self-Hosting)
-By default, the system resolves and streams the official Ubuntu boot assets (kernel, initrd) and installation ISOs from Canonical's public servers (`releases.ubuntu.com`) or GitHub repositories.
+By default, the system resolves and streams the official Ubuntu boot assets (kernel, initrd) and installation ISOs from canonical's public servers (`releases.ubuntu.com`) or GitHub repositories.
 
 If you prefer to host these assets locally within your own network (to speed up deployments or support offline installs):
-1. Using Custom URLs: You can edit the `"kernel"`, `"initrd"`, and `"iso"` URL targets in [release-map.json](configServer/templates/ubuntu/release-map.json) to point directly to any internal fileserver or local repository IP of your choice (e.g., `http://10.10.0.10/assets/ubuntu/linux`, `http://10.10.0.10/assets/ubuntu/initrd`, and `http://10.10.0.10/assets/ubuntu/ubuntu-24.04.4-live-server-amd64.iso`).
-2. Dynamic Overrides: You can also configure custom `base_url` or `generated_iso_url` parameters to point the playbooks and installer to your custom hosted URL targets.
+
+#### 1. Using Built-in Local Hosting (Nginx /customOS/ folder)
+Our provisioning server includes a built-in file server at the `/customOS/` URL prefix. It is backed by Nginx's kernel-level `sendfile` for high-performance direct downloads.
+
+- For ISOs: 
+  1. Place your local ISO file in the mirror-like directory structure under `configServer/http/customOS/` on your host:
+     `configServer/http/customOS/releases.ubuntu.com/<version>/ubuntu-<version>-live-server-amd64.iso`
+  2. Open [release-map.yml](configServer/templates/ubuntu/release-map.yml) and uncomment the `iso:` line for the target Ubuntu version. 
+  
+  The server will dynamically serve the local ISO file directly via Nginx. If the `iso:` key remains commented out in the YAML file, the server will automatically download the official ISO from canonical's mirrors.
+  
+- For Kernels & Initrd:
+  1. Place the kernel (`linux` or `vmlinuz`) and `initrd` files in the mirror-like directory structure under `configServer/http/customOS/` on your host:
+     `configServer/http/customOS/releases.ubuntu.com/<version>/netboot/amd64/`
+  2. In [release-map.yml](configServer/templates/ubuntu/release-map.yml), uncomment the `"kernel"` and `"initrd"` URLs to point to your local server (e.g., `http://{{API_HOST}}/customOS/releases.ubuntu.com/22.04.5/netboot/amd64/vmlinuz`).
+
+#### 2. Using custom external Mirrors
+- Custom URLs: You can edit the `"kernel"`, `"initrd"`, and `"iso"` URL targets in [release-map.yml](configServer/templates/ubuntu/release-map.yml) to point directly to any internal fileserver or local repository IP of your choice (e.g., `http://10.10.0.10/assets/ubuntu/linux`, `http://10.10.0.10/assets/ubuntu/initrd`, and `http://10.10.0.10/assets/ubuntu/ubuntu-24.04.4-live-server-amd64.iso`).
 
 ---
 
@@ -71,7 +87,7 @@ If you wish to provide your own custom TLS certificates instead:
    - `configServer/certs/server.key`
 
 #### 2. Launch the Stack
-To launch the entire secure stack (which starts both Nginx and the Python config server), run the following command in the project root:
+To launch the entire stack (which starts both Nginx and the Python config server), run the following command in the project root:
 ```bash
 # Clear host OS caches to maximize available memory (optional)
 sudo sync; echo 3 | sudo tee /proc/sys/vm/drop_caches

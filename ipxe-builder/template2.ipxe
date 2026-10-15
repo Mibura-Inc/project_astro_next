@@ -26,8 +26,8 @@ isset ${net${idx}/mac} || goto next_interface
 
 # Open interface; if it fails, move on
 ifopen net${idx} || goto next_interface
-echo Sleeping for 30 seconds, thanks to Cisco STP
-sleep 30
+echo Sleeping for 40 seconds, thanks to Cisco STP
+sleep 40
 
 # Configure static IP on this interface
 echo Configuring static IP on net${idx}...

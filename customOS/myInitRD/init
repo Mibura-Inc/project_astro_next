@@ -453,7 +453,8 @@ echo "Disk inventory ready"
 
 # ------------------------------------------
 
-sleep 10
+echo "waiting for 40 seconds, thanks to Cisco STP"
+sleep 40
 
 API_URL="http://${SERVER_IP}/api/v1/servers"
 AUTOMATION_URL="http://${SERVER_IP}/automation"
